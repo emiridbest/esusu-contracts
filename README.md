@@ -1,66 +1,110 @@
-## Foundry
+# Esusu Protocol
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
+> A decentralized community savings protocol built with Foundry and integrated with Aave
 
-Foundry consists of:
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
--   **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
--   **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
--   **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
--   **Chisel**: Fast, utilitarian, and verbose solidity REPL.
+## Overview
+
+Esusu is a decentralized savings protocol inspired by traditional community savings circles common in various cultures worldwide. Built using Solidity and the Foundry development framework, Esusu allows users to:
+
+- Deposit various supported tokens into time-locked savings contracts
+- Earn yield through Aave protocol integration
+- Participate in a referral incentive system
+- Build community-based savings programs
+
+The protocol implements time-locked savings with withdrawal windows (28th-30th of each month), along with penalty mechanisms for early withdrawals.
+
+## Key Features
+
+- **Multi-Token Support**: Accept deposits in any supported ERC20 token
+- **Yield Generation**: Integration with Aave protocol for yield on deposits
+- **Time-Locked Savings**: Withdrawal windows to encourage savings discipline
+- **Referral System**: Incentivization structure for user acquisition
+- **Factory Pattern**: Easy deployment of new savings contracts
+- **Emergency Controls**: Circuit breaker and emergency withdrawal capabilities
+- **Detailed Auditing**: Comprehensive event emission for all state changes
+
+## Architecture
+
+The protocol consists of several key contracts:
+
+- **SimpleMinisafe**: Core savings functionality with timelock mechanisms
+- **MiniSafeAave**: Extended functionality with Aave integration
+- **MiniSafeTokenStorage**: Token balance management
+- **MinisafeFactory**: Contract factory for deployment
 
 ## Documentation
 
-https://book.getfoundry.sh/
+- [Technical Documentation](./docs/technical-documentation.md) - Comprehensive technical details
+- [Developer Quickstart](./docs/developer-quickstart.md) - Get started developing with Esusu
 
-## Usage
+## Development Environment
 
-### Build
+Esusu is built using the Foundry development framework, which provides powerful testing and deployment tools.
 
-```shell
-$ forge build
+### Prerequisites
+
+- [Foundry](https://getfoundry.sh/)
+- Git
+
+### Setup
+
+1. Clone the repository:
+```bash
+git clone <repository-url>
+cd esusu
 ```
 
-### Test
-
-```shell
-$ forge test
+2. Install dependencies:
+```bash
+forge install
 ```
 
-### Format
-
-```shell
-$ forge fmt
+3. Build the project:
+```bash
+forge build
 ```
 
-### Gas Snapshots
-
-```shell
-$ forge snapshot
+4. Run tests:
+```bash
+forge test
 ```
 
-### Anvil
+## Deployments
 
-```shell
-$ anvil
-```
+The Esusu protocol has been deployed to the following networks:
 
-### Deploy
+| Network | Contract | Address |
+|---------|----------|---------|
+| Celo | MiniSafeAave | `0x...` |
 
-```shell
-$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
-```
+## Security
 
-### Cast
+The Esusu protocol implements several security mechanisms:
 
-```shell
-$ cast <subcommand>
-```
+- Reentrancy guards
+- Circuit breaker pattern
+- Access control modifiers
+- Event emission for all state changes
 
-### Help
+## Audits
 
-```shell
-$ forge --help
-$ anvil --help
-$ cast --help
-```
+The protocol relies on audited dependencies:
+
+- Aave V3 Core: [Audit Reports](./lib/aave-v3-core/audits/)
+- OpenZeppelin Contracts: [Security Audits](https://github.com/OpenZeppelin/openzeppelin-contracts/tree/master/audits)
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
