@@ -10,11 +10,8 @@ import "./IMiniSafeCommon.sol";
  * @dev Manages supported tokens and their related storage
  */
 contract MiniSafeTokenStorage is Ownable, Pausable, IMiniSafeCommon {
-    /// @dev Address constant representing native CELO token
-    address public constant CELO_TOKEN_ADDRESS = address(0);
-    
     /// @dev Address of the cUSD token contract
-    address public immutable CUSD_TOKEN_ADDRESS;
+    address public immutable CUSD_TOKEN_ADDRESS = 0x765DE816845861e75A25fCA122bb6898B8B1282a;
     
     /// @dev Maps token addresses to their support status
     mapping(address => bool) public supportedTokens;
@@ -40,23 +37,13 @@ contract MiniSafeTokenStorage is Ownable, Pausable, IMiniSafeCommon {
     /// @dev Addresses authorized to update user balances
     mapping(address => bool) public authorizedManagers;
 
-    /// @dev Events
-    event UserBalanceUpdated(address indexed user, address indexed token, uint256 amount, bool isDeposit);
-    event ManagerAuthorized(address indexed manager, bool status);
-    event UplinerRelationshipSet(address indexed user, address indexed upliner);
 
     /**
      * @dev Constructor sets up the immutable cUSD token address
-     * @param initialOwner Address that will own the contract
-     * @param _cUsdTokenAddress Address of the cUSD token
      */
-    constructor(address initialOwner, address _cUsdTokenAddress) Ownable(initialOwner) {
-        require(_cUsdTokenAddress != address(0), "cUSD address cannot be zero");
-        CUSD_TOKEN_ADDRESS = _cUsdTokenAddress;
-        
-        // Set initial token support for base tokens
-        supportedTokens[CELO_TOKEN_ADDRESS] = true;
-        supportedTokens[_cUsdTokenAddress] = true;
+    constructor() Ownable(msg.sender) {        
+        // Set initial token support for cUSD
+        supportedTokens[CUSD_TOKEN_ADDRESS] = true;
     }
     
     /**
@@ -85,9 +72,7 @@ contract MiniSafeTokenStorage is Ownable, Pausable, IMiniSafeCommon {
      * @return bool Whether token is supported
      */
     function isValidToken(address tokenAddress) public view returns (bool) {
-        return supportedTokens[tokenAddress] || 
-               tokenAddress == CELO_TOKEN_ADDRESS || 
-               tokenAddress == CUSD_TOKEN_ADDRESS;
+        return supportedTokens[tokenAddress] || tokenAddress == CUSD_TOKEN_ADDRESS;
     }
     
     /**
@@ -116,10 +101,7 @@ contract MiniSafeTokenStorage is Ownable, Pausable, IMiniSafeCommon {
      * @return success Whether the token was removed successfully
      */
     function removeSupportedToken(address tokenAddress) external onlyOwner returns (bool success) {
-        require(
-            tokenAddress != CELO_TOKEN_ADDRESS && tokenAddress != CUSD_TOKEN_ADDRESS,
-            "Cannot remove base tokens"
-        );
+        require(tokenAddress != CUSD_TOKEN_ADDRESS, "Cannot remove base token");
         require(supportedTokens[tokenAddress], "Token not supported");
         require(totalTokenDeposited[tokenAddress] == 0, "Token still has deposits");
         
@@ -143,13 +125,7 @@ contract MiniSafeTokenStorage is Ownable, Pausable, IMiniSafeCommon {
         uint256 counter = 0;
         uint256 currentIndex = 0;
         
-        // Always include base tokens
-        if (currentIndex >= startIndex && counter < count) {
-            tokens[counter] = CELO_TOKEN_ADDRESS;
-            counter++;
-        }
-        currentIndex++;
-        
+        // Always include base token
         if (currentIndex >= startIndex && counter < count) {
             tokens[counter] = CUSD_TOKEN_ADDRESS;
             counter++;
@@ -160,9 +136,7 @@ contract MiniSafeTokenStorage is Ownable, Pausable, IMiniSafeCommon {
         // This is inefficient but works for demonstration purposes
         for (uint256 i = 1; i < 1000 && counter < count; i++) {
             address potentialToken = address(uint160(i));
-            if (supportedTokens[potentialToken] && 
-                potentialToken != CELO_TOKEN_ADDRESS && 
-                potentialToken != CUSD_TOKEN_ADDRESS) {
+            if (supportedTokens[potentialToken] && potentialToken != CUSD_TOKEN_ADDRESS) {
                 if (currentIndex >= startIndex) {
                     tokens[counter] = potentialToken;
                     counter++;
@@ -303,3 +277,9 @@ contract MiniSafeTokenStorage is Ownable, Pausable, IMiniSafeCommon {
         emit UplinerRelationshipSet(user, upliner);
     }
 }
+
+/**
+ * Deployer: 0x89563f2535ad834833c0D84CF81Ee335867b8e34
+Deployed to: 0x16BF181C9966CbDec45E2D4ccDca146c80083Acb
+Transaction hash: 0x1eab4bccf1fadf82dab2fcd54155fa5ad0a30217c85e36e568d46d6686ade713
+ */

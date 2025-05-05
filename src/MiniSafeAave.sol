@@ -12,9 +12,9 @@ import "./MiniSafeAaveIntegration.sol";
 /**
  * @title MiniSafeAave
  * @dev A decentralized savings platform with Aave V3 integration, referral system, and custom token support
- * Allows users to deposit CELO, cUSD and other supported tokens to earn yield through Aave and MST tokens as incentives
+ * Allows users to deposit cUSD and other supported tokens to earn yield through Aave and MST tokens as incentives
  */
-contract MiniSafeAave is ERC20, ReentrancyGuard, Pausable, IMiniSafeCommon {
+contract MiniSafeAave2 is ERC20, ReentrancyGuard, Pausable, IMiniSafeCommon {
     using SafeERC20 for IERC20;
     
     /// @dev The percentage of reward given to upliners (10%)
@@ -59,23 +59,14 @@ contract MiniSafeAave is ERC20, ReentrancyGuard, Pausable, IMiniSafeCommon {
 
     /**
      * @dev Initialize the contract with initial token supply and dependencies
-     * @param initialOwner Address that will own the contract
-     * @param _tokenStorage Address of the token storage contract
-     * @param _aaveIntegration Address of the Aave integration contract
      */
-    constructor(
-        address initialOwner,
-        address _tokenStorage,
-        address payable _aaveIntegration
-    ) ERC20("miniSafeToken", "MST") {
-        require(_tokenStorage != address(0), "Token storage address cannot be zero");
-        require(_aaveIntegration != address(0), "Aave integration address cannot be zero");
-        
+    constructor() ERC20("miniSafeToken", "MST") {
         // Store the initial owner
-        _owner = initialOwner;
+        _owner = msg.sender;
         
-        tokenStorage = MiniSafeTokenStorage(_tokenStorage);
-        aaveIntegration = MiniSafeAaveIntegration(_aaveIntegration);
+        // Create new contract instances
+        tokenStorage = new MiniSafeTokenStorage();
+        aaveIntegration = new MiniSafeAaveIntegration();
         
         // Initial circuit breaker thresholds
         withdrawalAmountThreshold = 1000 ether; 
@@ -85,18 +76,9 @@ contract MiniSafeAave is ERC20, ReentrancyGuard, Pausable, IMiniSafeCommon {
         _mint(address(this), 5000000 * 1e18);
         
         // Register this contract as an authorized manager in token storage
-        MiniSafeTokenStorage(_tokenStorage).setManagerAuthorization(address(this), true);
+        tokenStorage.setManagerAuthorization(_owner, true);
     }
     
-    /**
-     * @dev Fallback function to receive CELO
-     */
-    receive() external payable {
-        if (msg.value > 0) {
-            deposit(tokenStorage.CELO_TOKEN_ADDRESS(), msg.value);
-        }
-    }
-
     /**
      * @dev Sets a referrer (upliner) for the caller
      * @param upliner Address of the referrer
@@ -127,33 +109,22 @@ contract MiniSafeAave is ERC20, ReentrancyGuard, Pausable, IMiniSafeCommon {
     }
 
     /**
-     * @dev Deposit any supported token into savings and then to Aave
+     * @dev Deposit any supported ERC20 token into savings and then to Aave
      * @param tokenAddress Address of token being deposited
      * @param amount Amount of tokens to deposit
      */
-    function deposit(address tokenAddress, uint256 amount) public payable nonReentrant whenNotPaused {
+    function deposit(address tokenAddress, uint256 amount) public nonReentrant whenNotPaused {
         require(tokenStorage.isValidToken(tokenAddress), "Unsupported token");
         require(amount >= MIN_DEPOSIT, "Deposit amount must meet minimum");
         
-        // Verify msg.value for CELO deposits
-        if (tokenAddress == tokenStorage.CELO_TOKEN_ADDRESS()) {
-            require(msg.value == amount, "Sent value must match deposit amount");
-        }
+        // First transfer tokens to this contract
+        IERC20(tokenAddress).safeTransferFrom(msg.sender, address(this), amount);
         
-        // Deposit to Aave through the integration contract
-        uint256 sharesReceived;
-        if (tokenAddress == tokenStorage.CELO_TOKEN_ADDRESS()) {
-            sharesReceived = aaveIntegration.depositToAave{value: amount}(tokenAddress, amount);
-        } else {
-            // First transfer tokens to this contract
-            IERC20(tokenAddress).safeTransferFrom(msg.sender, address(this), amount);
-            
-            // Approve the aave integration to spend the tokens
-            SafeERC20.forceApprove(IERC20(tokenAddress), address(aaveIntegration), amount);
-            
-            // Deposit to Aave
-            sharesReceived = aaveIntegration.depositToAave(tokenAddress, amount);
-        }
+        // Approve the aave integration to spend the tokens
+        SafeERC20.forceApprove(IERC20(tokenAddress), address(aaveIntegration), amount);
+        
+        // Deposit to Aave
+        uint256 sharesReceived = aaveIntegration.depositToAave(tokenAddress, amount);
         
         // Update user's balance in the token storage
         updateUserBalance(msg.sender, tokenAddress, sharesReceived, true);

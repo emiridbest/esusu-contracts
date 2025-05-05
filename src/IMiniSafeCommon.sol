@@ -16,6 +16,7 @@ interface IMiniSafeCommon {
     /**
      * @dev Events for tracking contract actions
      */
+    // Core system events
     event Deposited(address indexed depositor, uint256 amount, address indexed token, uint256 sharesReceived);
     event Withdrawn(address indexed withdrawer, uint256 amount, address indexed token, uint256 sharesRedeemed);
     event TimelockBroken(address indexed breaker, uint256 amount, address indexed token);
@@ -25,10 +26,16 @@ interface IMiniSafeCommon {
     event EmergencyWithdrawalCancelled(address indexed by);
     event EmergencyWithdrawalExecuted(address indexed by, address indexed token, uint256 amount);
     event CircuitBreakerTriggered(address indexed by, string reason);
+    
+    // Token storage related events
+    event TokenAdded(address indexed tokenAddress, address indexed aTokenAddress);
+    event TokenRemoved(address indexed tokenAddress);
+    event UserBalanceUpdated(address indexed user, address indexed token, uint256 amount, bool isDeposit);
+    event ManagerAuthorized(address indexed manager, bool status);
+    event UplinerRelationshipSet(address indexed user, address indexed upliner);
+    
+    // Aave integration related events
     event DepositedToAave(address indexed token, uint256 amount);
     event WithdrawnFromAave(address indexed token, uint256 amount);
     event AavePoolUpdated(address indexed newPool);
-    event TokenAdded(address indexed tokenAddress, address indexed aTokenAddress);
-    event TokenRemoved(address indexed tokenAddress);
-
 }

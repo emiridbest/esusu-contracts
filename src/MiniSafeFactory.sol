@@ -23,34 +23,21 @@ contract MiniSafeFactory {
     /**
      * @dev Deploy the complete MiniSafe system
      * @param owner Address that will own the deployed contracts
-     * @param cUsdTokenAddress Address of the cUSD token
-     * @param aavePoolAddressesProvider Address of Aave's Pool Addresses Provider
      * @return addresses Struct containing addresses of all deployed contracts
      */
     function deployMiniSafe(
-        address owner,
-        address cUsdTokenAddress,
-        address aavePoolAddressesProvider
+        address owner
     ) external returns (MiniSafeAddresses memory addresses) {
         // 1. Deploy TokenStorage
         MiniSafeTokenStorage tokenStorage = new MiniSafeTokenStorage(
-            owner,
-            cUsdTokenAddress
         );
         
         // 2. Deploy AaveIntegration
         MiniSafeAaveIntegration aaveIntegration = new MiniSafeAaveIntegration(
-            owner,
-            address(tokenStorage),
-            aavePoolAddressesProvider
         );
         
         // 3. Deploy MiniSafeAave
-        MiniSafeAave miniSafe = new MiniSafeAave(
-            owner,
-            address(tokenStorage),
-            payable(address(aaveIntegration))
-        );
+        MiniSafeAave2 miniSafe = new MiniSafeAave2();
         
         // 4. Set up permissions: authorize MiniSafeAave to manage token storage
         tokenStorage.setManagerAuthorization(address(miniSafe), true);
