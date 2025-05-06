@@ -113,7 +113,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## Contract Address
 
-    - MiniSafeAave: 0xEccfBFF5a15F0D17d97Da4a3255069A853e04bba
-    - MiniSafeAaveIntegration: 0x380314Bae828e2509ccD34DDFB35fb21d1259527
-    - MiniSafeTokenStorage: 0x830adA798828d294920703584577E7b108Cb145f
+    - MiniSafeAave: 0xEccfBFF5a15F0D17d97Da4a3255069A853e04bba 
+    - MiniSafeAaveIntegration: 0x380314Bae828e2509ccD34DDFB35fb21d1259527 - this has been fully implemented
+    - MiniSafeTokenStorage: 0x830adA798828d294920703584577E7b108Cb145f and 0x5b637F342B0a51895631dB0749Cf3017352339bC
     - Hackathon Video Contract: 0x4f2823A3AACa8eA1B427ABC5750Ccb3D4E8C4AC7
