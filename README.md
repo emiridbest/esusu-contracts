@@ -94,6 +94,7 @@ The protocol relies on audited dependencies:
 
 - Aave V3 Core: [Audit Reports](./lib/aave-v3-core/audits/)
 - OpenZeppelin Contracts: [Security Audits](https://github.com/OpenZeppelin/openzeppelin-contracts/tree/master/audits)
+- Esusu: [Preliminary Audit Report](esusu\report.md)
 
 ## License
 
@@ -108,3 +109,11 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 3. Commit your changes (`git commit -m 'Add some amazing feature'`)
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
+
+
+## Contract Address
+
+    - MiniSafeAave: 0xEccfBFF5a15F0D17d97Da4a3255069A853e04bba
+    - MiniSafeAaveIntegration: 0x380314Bae828e2509ccD34DDFB35fb21d1259527
+    - MiniSafeTokenStorage: 0x830adA798828d294920703584577E7b108Cb145f
+    - Hackathon Video Contract: 0x4f2823A3AACa8eA1B427ABC5750Ccb3D4E8C4AC7
