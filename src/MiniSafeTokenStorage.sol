@@ -10,6 +10,8 @@ import "./IMiniSafeCommon.sol";
  * @dev Manages supported tokens and their related storage
  */
 contract MiniSafeTokenStorage101 is Ownable, Pausable, IMiniSafeCommon {
+    /// @dev Address of the cUSD token contract
+    address public immutable CUSD_TOKEN_ADDRESS = 0x765DE816845861e75A25fCA122bb6898B8B1282a;
     
     /// @dev Maps token addresses to their support status
     mapping(address => bool) public supportedTokens;
@@ -40,7 +42,7 @@ contract MiniSafeTokenStorage101 is Ownable, Pausable, IMiniSafeCommon {
      * @dev Constructor sets up the immutable cUSD token address
      */
     constructor() Ownable(msg.sender) {        
-       
+        supportedTokens[CUSD_TOKEN_ADDRESS] = true;
     }
     
     /**
@@ -69,7 +71,7 @@ contract MiniSafeTokenStorage101 is Ownable, Pausable, IMiniSafeCommon {
      * @return bool Whether token is supported
      */
     function isValidToken(address tokenAddress) public view returns (bool) {
-        return supportedTokens[tokenAddress];
+        return supportedTokens[tokenAddress] || tokenAddress == CUSD_TOKEN_ADDRESS;
     }
     
     /**
@@ -98,6 +100,7 @@ contract MiniSafeTokenStorage101 is Ownable, Pausable, IMiniSafeCommon {
      * @return success Whether the token was removed successfully
      */
     function removeSupportedToken(address tokenAddress) external onlyOwner returns (bool success) {
+        require(tokenAddress != CUSD_TOKEN_ADDRESS, "Cannot remove base token");
         require(supportedTokens[tokenAddress], "Token not supported");
         require(totalTokenDeposited[tokenAddress] == 0, "Token still has deposits");
         
@@ -121,13 +124,18 @@ contract MiniSafeTokenStorage101 is Ownable, Pausable, IMiniSafeCommon {
         uint256 counter = 0;
         uint256 currentIndex = 0;
         
+        // Always include base token
+        if (currentIndex >= startIndex && counter < count) {
+            tokens[counter] = CUSD_TOKEN_ADDRESS;
+            counter++;
+        }
         currentIndex++;
         
         // In a the final contract, we would store the list of tokens separately
-        // This is inefficient but works for now
+        // This is inefficient but works for demonstration purposes
         for (uint256 i = 1; i < 1000 && counter < count; i++) {
             address potentialToken = address(uint160(i));
-            if (supportedTokens[potentialToken]) {
+            if (supportedTokens[potentialToken] && potentialToken != CUSD_TOKEN_ADDRESS) {
                 if (currentIndex >= startIndex) {
                     tokens[counter] = potentialToken;
                     counter++;
@@ -268,3 +276,9 @@ contract MiniSafeTokenStorage101 is Ownable, Pausable, IMiniSafeCommon {
         emit UplinerRelationshipSet(user, upliner);
     }
 }
+
+/**
+ * Deployer: 0x89563f2535ad834833c0D84CF81Ee335867b8e34
+Deployed to: 0x16BF181C9966CbDec45E2D4ccDca146c80083Acb
+Transaction hash: 0x1eab4bccf1fadf82dab2fcd54155fa5ad0a30217c85e36e568d46d6686ade713
+ */
