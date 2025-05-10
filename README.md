@@ -94,7 +94,7 @@ The protocol relies on audited dependencies:
 
 - Aave V3 Core: [Audit Reports](./lib/aave-v3-core/audits/)
 - OpenZeppelin Contracts: [Security Audits](https://github.com/OpenZeppelin/openzeppelin-contracts/tree/master/audits)
-- Esusu: [Preliminary Audit Report](esusu\report.md)
+- Esusu: [Preliminary Audit Report](report.md)
 
 ## License
 
