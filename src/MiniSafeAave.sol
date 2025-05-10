@@ -14,7 +14,7 @@ import "./MiniSafeAaveIntegration.sol";
  * @dev A decentralized savings platform with Aave V3 integration, referral system, and custom token support
  * Allows users to deposit cUSD and other supported tokens to earn yield through Aave and MST tokens as incentives
  */
-contract MiniSafeAave2 is ERC20, ReentrancyGuard, Pausable, IMiniSafeCommon {
+contract MiniSafeAave102 is ERC20, ReentrancyGuard, Pausable, IMiniSafeCommon {
     using SafeERC20 for IERC20;
     
     /// @dev The percentage of reward given to upliners (10%)
@@ -44,10 +44,10 @@ contract MiniSafeAave2 is ERC20, ReentrancyGuard, Pausable, IMiniSafeCommon {
     uint256 public lastWithdrawalTimestamp;
     
     /// @dev Token storage contract
-    MiniSafeTokenStorage public tokenStorage;
+    MiniSafeTokenStorage102 public tokenStorage;
     
     /// @dev Aave integration contract
-    MiniSafeAaveIntegration public aaveIntegration;
+    MiniSafeAaveIntegration102 public aaveIntegration;
 
     /// @dev Store the owner address to properly implement onlyOwner
     address private _owner;
@@ -57,16 +57,16 @@ contract MiniSafeAave2 is ERC20, ReentrancyGuard, Pausable, IMiniSafeCommon {
      */
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
-    /**
+      /**
      * @dev Initialize the contract with initial token supply and dependencies
      */
     constructor() ERC20("miniSafeToken", "MST") {
+
         // Store the initial owner
         _owner = msg.sender;
         
-        // Create new contract instances
-        tokenStorage = new MiniSafeTokenStorage();
-        aaveIntegration = new MiniSafeAaveIntegration();
+        tokenStorage = new MiniSafeTokenStorage102();
+        aaveIntegration = new MiniSafeAaveIntegration102();
         
         // Initial circuit breaker thresholds
         withdrawalAmountThreshold = 1000 ether; 
@@ -76,7 +76,7 @@ contract MiniSafeAave2 is ERC20, ReentrancyGuard, Pausable, IMiniSafeCommon {
         _mint(address(this), 5000000 * 1e18);
         
         // Register this contract as an authorized manager in token storage
-        tokenStorage.setManagerAuthorization(_owner, true);
+        tokenStorage.setManagerAuthorization(address(this), true);
     }
     
     /**
