@@ -77,7 +77,10 @@ The Esusu protocol has been deployed to the following networks:
 
 | Network | Contract | Address |
 |---------|----------|---------|
-| Celo | MiniSafeAave | `0x...` |
+| Celo | MiniSafeAave | `0x9fAB2C3310a906f9306ACaA76303BcEb46cA5478` |
+| Celo | MiniSafeAaveIntegration | `0xB58c8917eD9e2ba632f6f446cA0509781dd676B2` |
+| Celo | MiniSafeAave | `0x67fDEC406b8d3bABaf4D59627aCde3C5cD4BA90A` |
+
 
 ## Security
 
@@ -110,10 +113,3 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 
-
-## Contract Address
-
-    - MiniSafeAave: 0xEccfBFF5a15F0D17d97Da4a3255069A853e04bba 
-    - MiniSafeAaveIntegration: 0x380314Bae828e2509ccD34DDFB35fb21d1259527 - this has been fully implemented
-    - MiniSafeTokenStorage: 0x830adA798828d294920703584577E7b108Cb145f and 0x5b637F342B0a51895631dB0749Cf3017352339bC
-    - Hackathon Video Contract: 0x4f2823A3AACa8eA1B427ABC5750Ccb3D4E8C4AC7
