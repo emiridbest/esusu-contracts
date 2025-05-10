@@ -9,7 +9,7 @@ import "./IMiniSafeCommon.sol";
  * @title MiniSafeTokenStorage
  * @dev Manages supported tokens and their related storage
  */
-contract MiniSafeTokenStorage101 is Ownable, Pausable, IMiniSafeCommon {
+contract MiniSafeTokenStorage102 is Ownable, Pausable, IMiniSafeCommon {
     /// @dev Address of the cUSD token contract
     address public immutable CUSD_TOKEN_ADDRESS = 0x765DE816845861e75A25fCA122bb6898B8B1282a;
     
@@ -38,11 +38,11 @@ contract MiniSafeTokenStorage101 is Ownable, Pausable, IMiniSafeCommon {
     mapping(address => bool) public authorizedManagers;
 
 
-    /**
+     /**
      * @dev Constructor sets up the immutable cUSD token address
      */
-    constructor() Ownable(msg.sender) {        
-        supportedTokens[CUSD_TOKEN_ADDRESS] = true;
+    constructor() Ownable(msg.sender) {
+        
     }
     
     /**
@@ -133,7 +133,7 @@ contract MiniSafeTokenStorage101 is Ownable, Pausable, IMiniSafeCommon {
         
         // In a the final contract, we would store the list of tokens separately
         // This is inefficient but works for demonstration purposes
-        for (uint256 i = 1; i < 1000 && counter < count; i++) {
+        for (uint256 i = 1; i < 100 && counter < count; i++) {
             address potentialToken = address(uint160(i));
             if (supportedTokens[potentialToken] && potentialToken != CUSD_TOKEN_ADDRESS) {
                 if (currentIndex >= startIndex) {
