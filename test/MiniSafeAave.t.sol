@@ -2,9 +2,9 @@
 pragma solidity ^0.8.29;
 
 import "forge-std/Test.sol";
-import "../src/MiniSafeAave.sol";
-import "../src/MiniSafeTokenStorage.sol";
-import "../src/MiniSafeAaveIntegration.sol";
+import "../src/minisafe/MiniSafeAave.sol";
+import "../src/minisafe/MiniSafeTokenStorage.sol";
+import "../src/minisafe/MiniSafeAaveIntegration.sol";
 import {IPool} from "@aave/contracts/interfaces/IPool.sol";
 import {IPoolAddressesProvider} from "@aave/contracts/interfaces/IPoolAddressesProvider.sol";
 import {DataTypes} from "@aave/contracts/protocol/libraries/types/DataTypes.sol";
@@ -12,10 +12,23 @@ import {DataTypes} from "@aave/contracts/protocol/libraries/types/DataTypes.sol"
 // Import the mock contracts from MiniSafeAaveIntegration.t.sol
 import "./MiniSafeAaveIntegration.t.sol";
 
+// Concrete implementation of MockAavePool for MiniSafeAave.t.sol
+contract MockAavePoolConcrete is MockAavePool {
+    constructor(address _mockATokenForCUSD, address _mockATokenForToken) 
+        MockAavePool(_mockATokenForCUSD, _mockATokenForToken) {}
+        
+    // Implement supply function from IPool interface
+    function supply(address asset, uint256 amount, address onBehalfOf, uint16 referralCode) external override {
+        // Mock the supply function
+        // In a real implementation, this would transfer tokens and mint aTokens
+        mockBalances[asset] += amount;
+    }
+}
+
 contract MiniSafeAaveTest is Test {
-    MiniSafeAave2 public miniSafe;
-    MiniSafeTokenStorage public tokenStorage;
-    MiniSafeAaveIntegration public aaveIntegration;
+    MiniSafeAave102 public miniSafe;
+    MiniSafeTokenStorage102 public tokenStorage;
+    MiniSafeAaveIntegration102 public aaveIntegration;
 
     
     uint256 private emergencyWithdrawalAvailableTime;
@@ -23,7 +36,7 @@ contract MiniSafeAaveTest is Test {
     
 
     // Mock contracts
-    MockAavePool public mockPool;
+    MockAavePoolConcrete public mockPool;
     MockAaveAddressesProvider public mockAddressesProvider;
     MockAToken public mockATokenCUSD;
     MockAToken public mockATokenRandom;
@@ -34,7 +47,6 @@ contract MiniSafeAaveTest is Test {
     address public owner;
     address public user1;
     address public user2;
-    address public upliner;
     
     // Constants for testing
     uint256 public constant DEPOSIT_AMOUNT = 1000;
@@ -46,8 +58,6 @@ contract MiniSafeAaveTest is Test {
     event Deposited(address indexed depositor, uint256 amount, address indexed token, uint256 sharesReceived);
     event Withdrawn(address indexed withdrawer, uint256 amount, address indexed token, uint256 sharesRedeemed);
     event TimelockBroken(address indexed breaker, uint256 amount, address indexed token);
-    event UplinerSet(address indexed user, address indexed upliner);
-    event RewardDistributed(address indexed upliner, address indexed depositor, uint256 amount);
     event EmergencyWithdrawalInitiated(address indexed by, uint256 availableAt);
     event EmergencyWithdrawalCancelled(address indexed by);
     event EmergencyWithdrawalExecuted(address indexed by, address indexed token, uint256 amount);
@@ -57,26 +67,23 @@ contract MiniSafeAaveTest is Test {
         owner = address(this);
         user1 = address(0x1);
         user2 = address(0x2);
-        upliner = address(0x3);
         
         // Deploy mock tokens
         mockCUSD = new MockERC20();
         mockRandomToken = new MockERC20();
         mockATokenCUSD = new MockAToken();
         mockATokenRandom = new MockAToken();
-        
-        
         // Deploy mock Aave contracts
-        mockPool = new MockAavePool(address(mockATokenCUSD), address(mockATokenRandom));
+        mockPool = new MockAavePoolConcrete(address(mockATokenCUSD), address(mockATokenRandom));
         
         // Deploy token storage
-        tokenStorage = new MiniSafeTokenStorage();
+        tokenStorage = new MiniSafeTokenStorage102();
         
         // Deploy Aave integration
-        aaveIntegration = new MiniSafeAaveIntegration();
+        aaveIntegration = new MiniSafeAaveIntegration102(address(tokenStorage));
         
         // Deploy MiniSafeAave
-        miniSafe = new MiniSafeAave2();
+        miniSafe = new MiniSafeAave102();
         
         // Set up permissions
         tokenStorage.setManagerAuthorization(address(miniSafe), true);
@@ -95,7 +102,7 @@ contract MiniSafeAaveTest is Test {
         mockATokenRandom.mint(address(aaveIntegration), 0);
     }
     
-    function testInitialState() public {
+    function testInitialState() public view {
         assertEq(miniSafe.owner(), owner);
         assertEq(address(miniSafe.tokenStorage()), address(tokenStorage));
         assertEq(address(miniSafe.aaveIntegration()), address(aaveIntegration));
@@ -104,20 +111,7 @@ contract MiniSafeAaveTest is Test {
     
     
 
-    
-    function testSetUpliner() public {
-        vm.startPrank(user1);
-        
-        vm.expectEmit(true, true, false, true);
-        emit UplinerSet(user1, upliner);
-        
-        miniSafe.setUpliner(upliner);
-        vm.stopPrank();
-        
-        assertEq(tokenStorage.upliners(user1), upliner);
-        assertTrue(tokenStorage.isDownliner(upliner, user1));
-    }
-    
+
     function testDeposit() public {
         vm.startPrank(user1);
         
@@ -141,27 +135,7 @@ contract MiniSafeAaveTest is Test {
         assertEq(mockCUSD.balanceOf(user1), DEPOSIT_AMOUNT * 10 - DEPOSIT_AMOUNT);
     }
     
-    function testDepositWithUpliner() public {
-        // Set upliner for user1
-        vm.prank(user1);
-        miniSafe.setUpliner(upliner);
-        uint256 incentive = 5;
-        // Calculate expected incentive
-        uint256 expectedIncentive = (DEPOSIT_AMOUNT * incentive) / 100;
-        
-        vm.startPrank(user1);
-        mockCUSD.approve(address(miniSafe), DEPOSIT_AMOUNT);
-        
-        vm.expectEmit(true, true, false, true);
-        emit RewardDistributed(upliner, user1, expectedIncentive);
-        
-        miniSafe.deposit(address(mockCUSD), DEPOSIT_AMOUNT);
-        vm.stopPrank();
-        
-        // Check incentive was added to upliner
-        assertEq(tokenStorage.getUserIncentiveBalance(upliner), expectedIncentive);
-    }
-    
+
     function testWithdraw() public {
         // First make a deposit
         vm.startPrank(user1);
