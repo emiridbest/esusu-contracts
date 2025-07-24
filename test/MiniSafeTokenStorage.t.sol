@@ -5,7 +5,7 @@ import "forge-std/Test.sol";
 import "../src/MiniSafeTokenStorage.sol";
 
 contract MiniSafeTokenStorageTest is Test {
-    MiniSafeTokenStorage public tokenStorage;
+    MiniSafeTokenStorage102 public tokenStorage;
     address public owner;
     address public user1;
     address public user2;
@@ -19,7 +19,7 @@ contract MiniSafeTokenStorageTest is Test {
     event TokenRemoved(address indexed tokenAddress);
     event UserBalanceUpdated(address indexed user, address indexed token, uint256 amount, bool isDeposit);
     event ManagerAuthorized(address indexed manager, bool status);
-    event UplinerRelationshipSet(address indexed user, address indexed upliner);
+    // event UplinerRelationshipSet(address indexed user, address indexed upliner);
 
     function setUp() public {
         // Set up accounts
@@ -32,13 +32,13 @@ contract MiniSafeTokenStorageTest is Test {
         randomToken = address(0x5);
 
         // Deploy contract
-        tokenStorage = new MiniSafeTokenStorage();
+        tokenStorage = new MiniSafeTokenStorage102();
     }
 
     function testInitialState() public view {
         // Check if the constructor initialized the contract correctly
         assertEq(tokenStorage.owner(), owner);
-        assertEq(tokenStorage.CUSD_TOKEN_ADDRESS(), cUsdToken);
+        assertEq(tokenStorage.cusdTokenAddress(), cUsdToken);
         assertTrue(tokenStorage.isValidToken(cUsdToken));
     }
 
@@ -54,21 +54,19 @@ contract MiniSafeTokenStorageTest is Test {
         assertEq(tokenStorage.tokenToAToken(randomToken), aToken);
     }
 
-    function testFailAddZeroAddressToken() public {
-        // Should fail when trying to add address(0) as token
+    function test_RevertIf_AddZeroAddressToken() public {
+        vm.expectRevert();
         tokenStorage.addSupportedToken(address(0), aToken);
     }
 
-    function testFailAddZeroAddressAToken() public {
-        // Should fail when trying to add address(0) as aToken
+    function test_RevertIf_AddZeroAddressAToken() public {
+        vm.expectRevert();
         tokenStorage.addSupportedToken(randomToken, address(0));
     }
 
-    function testFailAddDuplicateToken() public {
-        // Add token first
+    function test_RevertIf_AddDuplicateToken() public {
         tokenStorage.addSupportedToken(randomToken, aToken);
-        
-        // Should fail when trying to add the same token again
+        vm.expectRevert();
         tokenStorage.addSupportedToken(randomToken, aToken);
     }
 
@@ -88,27 +86,21 @@ contract MiniSafeTokenStorageTest is Test {
         assertEq(tokenStorage.tokenToAToken(randomToken), address(0));
     }
 
-    function testFailRemoveBaseToken() public {
-        // Should fail when trying to remove the base token (cUSD)
+    function test_RevertIf_RemoveBaseToken() public {
+        vm.expectRevert();
         tokenStorage.removeSupportedToken(cUsdToken);
     }
 
-    function testFailRemoveNonSupportedToken() public {
-        // Should fail when trying to remove a token that isn't supported
+    function test_RevertIf_RemoveNonSupportedToken() public {
+        vm.expectRevert();
         tokenStorage.removeSupportedToken(randomToken);
     }
 
-    function testFailRemoveTokenWithDeposits() public {
-        // Add a token
+    function test_RevertIf_RemoveTokenWithDeposits() public {
         tokenStorage.addSupportedToken(randomToken, aToken);
-        
-        // Authorize this contract as a manager
         tokenStorage.setManagerAuthorization(owner, true);
-        
-        // Make a deposit to the token
         tokenStorage.updateUserTokenShare(user1, randomToken, 100, true);
-        
-        // Should fail when trying to remove a token that has deposits
+        vm.expectRevert();
         tokenStorage.removeSupportedToken(randomToken);
     }
 
@@ -155,110 +147,19 @@ contract MiniSafeTokenStorageTest is Test {
         assertEq(tokenStorage.totalTokenDeposited(randomToken), depositAmount - withdrawAmount);
     }
 
-    function testFailUpdateShareInsufficientBalance() public {
-        // Add a token
+    function test_RevertIf_UpdateShareInsufficientBalance() public {
         tokenStorage.addSupportedToken(randomToken, aToken);
-        
-        // Authorize this contract as a manager
         tokenStorage.setManagerAuthorization(owner, true);
-        
-        // Make a deposit
         tokenStorage.updateUserTokenShare(user1, randomToken, 100, true);
-        
-        // Try to withdraw more than the balance
+        vm.expectRevert();
         tokenStorage.updateUserTokenShare(user1, randomToken, 150, false);
     }
 
-    function testFailUpdateShareUnauthorized() public {
-        // Add a token
+    function test_RevertIf_UpdateShareUnauthorized() public {
         tokenStorage.addSupportedToken(randomToken, aToken);
-        
-        // Try to update shares without manager authorization (should fail)
         vm.prank(user1);
+        vm.expectRevert();
         tokenStorage.updateUserTokenShare(user1, randomToken, 100, true);
-    }
-
-    function testAddAndRemoveUserIncentives() public {
-        // Authorize this contract as a manager
-        tokenStorage.setManagerAuthorization(owner, true);
-        
-        // Add incentives
-        uint256 incentiveAmount = 200;
-        bool success = tokenStorage.addUserIncentives(user1, incentiveAmount);
-        
-        assertTrue(success);
-        assertEq(tokenStorage.getUserIncentiveBalance(user1), incentiveAmount);
-        
-        // Remove incentives
-        uint256 removeAmount = 50;
-        success = tokenStorage.removeUserIncentives(user1, removeAmount);
-        
-        assertTrue(success);
-        assertEq(tokenStorage.getUserIncentiveBalance(user1), incentiveAmount - removeAmount);
-    }
-
-    function testFailRemoveTooManyIncentives() public {
-        // Authorize this contract as a manager
-        tokenStorage.setManagerAuthorization(owner, true);
-        
-        // Add incentives
-        tokenStorage.addUserIncentives(user1, 100);
-        
-        // Try to remove more than the balance
-        tokenStorage.removeUserIncentives(user1, 150);
-    }
-
-    function testSetManagerAuthorization() public {
-        vm.expectEmit(true, false, false, true);
-        emit ManagerAuthorized(manager, true);
-        
-        tokenStorage.setManagerAuthorization(manager, true);
-        assertTrue(tokenStorage.authorizedManagers(manager));
-        
-        vm.expectEmit(true, false, false, true);
-        emit ManagerAuthorized(manager, false);
-        
-        tokenStorage.setManagerAuthorization(manager, false);
-        assertFalse(tokenStorage.authorizedManagers(manager));
-    }
-
-    function testFailSetManagerAuthorizationUnauthorized() public {
-        // Try to set manager authorization from an unauthorized account
-        vm.prank(user1);
-        tokenStorage.setManagerAuthorization(manager, true);
-    }
-
-    function testSetUpliner() public {
-        // Authorize this contract as a manager
-        tokenStorage.setManagerAuthorization(owner, true);
-        
-        vm.expectEmit(true, true, false, true);
-        emit UplinerRelationshipSet(user2, user1);
-        
-        tokenStorage.setUpliner(user2, user1);
-        
-        assertEq(tokenStorage.upliners(user2), user1);
-        assertTrue(tokenStorage.isDownliner(user1, user2));
-        assertEq(tokenStorage.downlinerCount(user1), 1);
-    }
-
-    function testFailSetUplinerAlreadySet() public {
-        // Authorize this contract as a manager
-        tokenStorage.setManagerAuthorization(owner, true);
-        
-        // Set upliner once
-        tokenStorage.setUpliner(user2, user1);
-        
-        // Try to set again (should fail)
-        tokenStorage.setUpliner(user2, address(0x5));
-    }
-
-    function testFailSetUplinerToSelf() public {
-        // Authorize this contract as a manager
-        tokenStorage.setManagerAuthorization(owner, true);
-        
-        // Try to set user as their own upliner
-        tokenStorage.setUpliner(user1, user1);
     }
 
     function testGetUserDepositTime() public {

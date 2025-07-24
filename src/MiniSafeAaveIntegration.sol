@@ -19,7 +19,7 @@ import {DataTypes} from "@aave/contracts/protocol/libraries/types/DataTypes.sol"
  * @title MiniSafeAaveIntegration
  * @dev Handles interactions with the Aave protocol
  */
-contract MiniSafeAaveIntegration102 is Ownable, IMiniSafeCommon {
+contract MiniSafeAaveIntegration is Ownable, IMiniSafeCommon {
     using SafeERC20 for IERC20;
 
     /// @dev Aave Pool contract for lending and borrowing
@@ -28,44 +28,48 @@ contract MiniSafeAaveIntegration102 is Ownable, IMiniSafeCommon {
     IPoolDataProvider public dataProvider;
 
     /// @dev Token storage contract
-    MiniSafeTokenStorage102 public tokenStorage;
+    MiniSafeTokenStorage102 public immutable tokenStorage;
+
+    /**
+     * @dev Modifier to restrict access to authorized managers
+     */
+    modifier onlyAuthorizedManager() {
+        require(owner() == _msgSender() || tokenStorage.authorizedManagers(_msgSender()), 
+                "Caller is not authorized");
+        _;
+    }
 
     /**
      * @dev Initialize the contract with Aave integration
      */
-    constructor() Ownable(msg.sender) {
-        tokenStorage = new MiniSafeTokenStorage102();
-
-        // Initialize Aave pool
-        address _aavePoolAddressesProvider = 0x9F7Cf9417D5251C59fE94fB9147feEe1aAd9Cea5;
-        IPoolAddressesProvider provider = IPoolAddressesProvider(
-            _aavePoolAddressesProvider
-        );
+    constructor(address _tokenStorageAddress, address _aavePoolAddressesProvider) Ownable(msg.sender) {
+        tokenStorage = MiniSafeTokenStorage102(_tokenStorageAddress);
+        IPoolAddressesProvider provider = IPoolAddressesProvider(_aavePoolAddressesProvider);
         aavePool = IPool(provider.getPool());
         dataProvider = IPoolDataProvider(provider.getPoolDataProvider());
-
-        // Initialize default tokens
-        initializeBaseTokens();
+        // Must call initializeBaseTokens() externally after ownership transfer
     }
 
     /**
      * @dev Initialize the base tokens with their aToken addresses
+     * @notice Must be called after ownership of tokenStorage is transferred to this contract
      */
-    function initializeBaseTokens() internal {
+    function initializeBaseTokens() external onlyOwner {
         // Try to get aToken addresses for base tokens
-        try
-            dataProvider.getReserveTokensAddresses(
-                tokenStorage.CUSD_TOKEN_ADDRESS()
-            )
-        returns (address aTokenAddress, address, address) {
+        // slither-disable-next-line unused-return
+        try dataProvider.getReserveTokensAddresses(tokenStorage.cusdTokenAddress()) returns (
+            address aTokenAddress, 
+            address, /* stableDebtToken - explicitly unused */ 
+            address  /* variableDebtToken - explicitly unused */
+        ) {
+            // We only need aTokenAddress for our use case, other return values are explicitly unused
             if (aTokenAddress != address(0)) {
-                tokenStorage.addSupportedToken(
-                    tokenStorage.CUSD_TOKEN_ADDRESS(),
-                    aTokenAddress
-                );
+                bool added = tokenStorage.addSupportedToken(tokenStorage.cusdTokenAddress(), aTokenAddress);
+                require(added, "Failed to add supported token");
             }
         } catch {
-            // cUSD not supported, skip it
+            // cUSD not supported on this network, skip initialization
+            // This is expected on testnets or networks without cUSD
         }
     }
 
@@ -77,7 +81,7 @@ contract MiniSafeAaveIntegration102 is Ownable, IMiniSafeCommon {
         require(newPoolAddress != address(0), "Invalid pool address");
         dataProvider = IPoolDataProvider(newPoolAddress);
         // Re-initialize base tokens with the new pool
-        initializeBaseTokens();
+        // (Call initializeBaseTokens() externally after ownership transfer if needed)
 
         emit AavePoolUpdated(newPoolAddress);
     }
@@ -102,17 +106,18 @@ contract MiniSafeAaveIntegration102 is Ownable, IMiniSafeCommon {
         address tokenAddress
     ) external onlyOwner returns (bool success) {
         require(tokenAddress != address(0), "Cannot add zero address as token");
-
         // Try to verify the token is listed on Aave by getting its reserve data
+        // slither-disable-next-line unused-return
         try dataProvider.getReserveTokensAddresses(tokenAddress) returns (
-            address aTokenAddress,
-            address,
-            address
+            address aTokenAddress, 
+            address, /* stableDebtToken - explicitly unused */ 
+            address  /* variableDebtToken - explicitly unused */
         ) {
+            // We only need aTokenAddress for our use case, other return values are explicitly unused
             require(aTokenAddress != address(0), "Token not supported by Aave");
-
-            // Add token to supported list in the token storage
-            return tokenStorage.addSupportedToken(tokenAddress, aTokenAddress);
+            bool added = tokenStorage.addSupportedToken(tokenAddress, aTokenAddress);
+            require(added, "Failed to add supported token");
+            return true;
         } catch {
             revert("Error checking token support in Aave");
         }
@@ -128,7 +133,10 @@ contract MiniSafeAaveIntegration102 is Ownable, IMiniSafeCommon {
         address tokenAddress,
         uint256 amount
     ) external returns (uint256 sharesReceived) {
+        require(amount > 0, "Amount must be greater than 0");
         require(tokenStorage.isValidToken(tokenAddress), "Unsupported token");
+        require(owner() == _msgSender() || tokenStorage.authorizedManagers(_msgSender()), 
+                "Caller is not authorized");
 
         uint256 aTokenBalanceBefore;
         uint256 aTokenBalanceAfter;
@@ -149,12 +157,16 @@ contract MiniSafeAaveIntegration102 is Ownable, IMiniSafeCommon {
         SafeERC20.forceApprove(IERC20(tokenAddress), address(aavePool), amount);
 
         // Deposit tokens to Aave
-        aavePool.supply(
+        try aavePool.supply(
             tokenAddress,
             amount,
             address(this),
             0 // referralCode, typically 0
-        );
+        ) {
+            // Success
+        } catch {
+            revert("Aave deposit failed");
+        }
 
         // Get aToken balance after deposit
         aTokenBalanceAfter = IERC20(aTokenAddress).balanceOf(address(this));
@@ -178,9 +190,12 @@ contract MiniSafeAaveIntegration102 is Ownable, IMiniSafeCommon {
         address tokenAddress,
         uint256 amount,
         address recipient
-    ) external onlyOwner returns (uint256 amountWithdrawn) {
+    ) external returns (uint256 amountWithdrawn) {
+        require(amount > 0, "Amount must be greater than 0");
         require(tokenStorage.isValidToken(tokenAddress), "Unsupported token");
         require(recipient != address(0), "Cannot withdraw to zero address");
+        require(owner() == _msgSender() || tokenStorage.authorizedManagers(_msgSender()), 
+                "Caller is not authorized");
 
         // Withdraw from Aave
         amountWithdrawn = aavePool.withdraw(
@@ -205,6 +220,9 @@ contract MiniSafeAaveIntegration102 is Ownable, IMiniSafeCommon {
         address tokenAddress
     ) external view returns (uint256) {
         require(tokenStorage.isValidToken(tokenAddress), "Unsupported token");
+        // Allow owner or authorized managers to call this function
+        require(owner() == _msgSender() || tokenStorage.authorizedManagers(_msgSender()), 
+                "Caller is not authorized");
         address aTokenAddress = tokenStorage.tokenToAToken(tokenAddress);
         require(aTokenAddress != address(0), "Token not mapped to aToken");
 

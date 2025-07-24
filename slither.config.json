@@ -1,0 +1,10 @@
+{
+    "detectors_to_run": "abiencoderv2-array,arbitrary-send-erc20,array-by-reference,encode-packed-collision,incorrect-shift,multiple-constructors,name-reused,protected-vars,public-mappings-nested,rtlo,shadowing-state,suicidal,uninitialized-state,uninitialized-storage,unprotected-upgrade,arbitrary-send-erc20-permit,controlled-array-length,controlled-delegatecall,delegatecall-loop,incorrect-exp,incorrect-return,msg-value-loop,reentrancy-eth,return-leave,storage-array,unchecked-transfer,weak-prng,domain-separator-collision,enum-conversion,erc20-interface,erc721-interface,incorrect-equality,locked-ether,mapping-deletion,shadowing-abstract,tautological-compare,tautology,write-after-write,boolean-cst,constant-function-asm,constant-function-state,divide-before-multiply,reentrancy-no-eth,reused-constructor,tx-origin,unchecked-lowlevel,unchecked-send,uninitialized-local,unused-return,incorrect-modifier,shadowing-builtin,shadowing-local,uninitialized-fptr-cst,variable-scope,void-cst,events-access,events-maths,incorrect-unary,missing-zero-check,reentrancy-benign,reentrancy-events,timestamp,boolean-equal,cyclomatic-complexity,deprecated-standards,erc20-indexed,function-init-state,low-level-calls,pragma,unused-state,reentrancy-unlimited-gas,constable-states,external-function,immutable-states,var-read-using-this",
+    "filter_paths": "lib/",
+    "exclude_dependencies": true,
+    "exclude_optimization": false,
+    "exclude_informational": false,
+    "exclude_low": false,
+    "exclude_medium": false,
+    "exclude_high": false
+} 

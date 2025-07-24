@@ -10,7 +10,6 @@ Esusu is a decentralized savings protocol inspired by traditional community savi
 
 - Deposit various supported tokens into time-locked savings contracts
 - Earn yield through Aave protocol integration
-- Participate in a referral incentive system
 - Build community-based savings programs
 
 The protocol implements time-locked savings with withdrawal windows (28th-30th of each month), along with penalty mechanisms for early withdrawals.
@@ -20,7 +19,6 @@ The protocol implements time-locked savings with withdrawal windows (28th-30th o
 - **Multi-Token Support**: Accept deposits in any supported ERC20 token
 - **Yield Generation**: Integration with Aave protocol for yield on deposits
 - **Time-Locked Savings**: Withdrawal windows to encourage savings discipline
-- **Referral System**: Incentivization structure for user acquisition
 - **Factory Pattern**: Easy deployment of new savings contracts
 - **Emergency Controls**: Circuit breaker and emergency withdrawal capabilities
 - **Detailed Auditing**: Comprehensive event emission for all state changes
@@ -38,6 +36,21 @@ The protocol consists of several key contracts:
 
 - [Technical Documentation](./docs/technical-documentation.md) - Comprehensive technical details
 - [Developer Quickstart](./docs/developer-quickstart.md) - Get started developing with Esusu
+- [Security Documentation](./docs/slither-security-fixes.md) - Security analysis and fixes
+- [Formal Verification](./docs/formal-verification-specification.md) - Formal verification specification
+- [Slither Configuration](./docs/slither-configuration.md) - Static analysis configuration
+
+## Security
+
+The Esusu protocol has undergone comprehensive security analysis and testing:
+
+- **Static Analysis**: Analyzed with Slither with all critical and high-severity issues resolved
+- **Test Coverage**: Maintains minimum 95% code coverage using Foundry tests
+- **Security Best Practices**: Implements CEI pattern, proper access controls, and emergency mechanisms
+- **Formal Verification**: Specifications available for critical functions
+- **Audit Ready**: Prepared for third-party security audits
+
+See [Security Documentation](./docs/slither-security-fixes.md) for detailed security analysis and fixes.
 
 ## Development Environment
 

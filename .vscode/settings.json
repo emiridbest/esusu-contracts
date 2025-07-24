@@ -1,0 +1,8 @@
+{
+    "wake.compiler.solc.remappings": [
+        "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
+        "@openzeppelin/contracts-upgradeable/=lib/openzeppelin-contracts-upgradeable/contracts/",
+        "@aave/=lib/aave-v3-core/",
+        "@ethsign/sign-protocol-evm/=lib/sign-protocol-evm/"
+    ]
+}

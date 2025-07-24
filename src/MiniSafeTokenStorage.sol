@@ -11,7 +11,7 @@ import "./IMiniSafeCommon.sol";
  */
 contract MiniSafeTokenStorage102 is Ownable, Pausable, IMiniSafeCommon {
     /// @dev Address of the cUSD token contract
-    address public immutable CUSD_TOKEN_ADDRESS = 0x765DE816845861e75A25fCA122bb6898B8B1282a;
+    address public immutable cusdTokenAddress = 0x765DE816845861e75A25fCA122bb6898B8B1282a;
     
     /// @dev Maps token addresses to their support status
     mapping(address => bool) public supportedTokens;
@@ -25,15 +25,6 @@ contract MiniSafeTokenStorage102 is Ownable, Pausable, IMiniSafeCommon {
     /// @dev Track user balances - maps user address to token shares by token address
     mapping(address => IMiniSafeCommon.UserBalance) public userBalances;
 
-    /// @dev Maps users to their referrers (upliners)
-    mapping(address => address) public upliners;
-    
-    /// @dev Maps referrers to their referred users count (safer than storing arrays)
-    mapping(address => uint256) public downlinerCount;
-    
-    /// @dev Mapping to track valid referral relationships
-    mapping(address => mapping(address => bool)) public isDownliner;
-    
     /// @dev Addresses authorized to update user balances
     mapping(address => bool) public authorizedManagers;
 
@@ -71,7 +62,7 @@ contract MiniSafeTokenStorage102 is Ownable, Pausable, IMiniSafeCommon {
      * @return bool Whether token is supported
      */
     function isValidToken(address tokenAddress) public view returns (bool) {
-        return supportedTokens[tokenAddress] || tokenAddress == CUSD_TOKEN_ADDRESS;
+        return supportedTokens[tokenAddress] || tokenAddress == cusdTokenAddress;
     }
     
     /**
@@ -80,7 +71,7 @@ contract MiniSafeTokenStorage102 is Ownable, Pausable, IMiniSafeCommon {
      * @param aTokenAddress Address of the corresponding aToken
      * @return success Whether the token was added successfully
      */
-    function addSupportedToken(address tokenAddress, address aTokenAddress) external onlyOwner returns (bool success) {
+    function addSupportedToken(address tokenAddress, address aTokenAddress) external onlyAuthorizedManager returns (bool success) {
         require(tokenAddress != address(0), "Cannot add zero address as token");
         require(aTokenAddress != address(0), "aToken address cannot be zero");
         require(!supportedTokens[tokenAddress], "Token already supported");
@@ -100,7 +91,7 @@ contract MiniSafeTokenStorage102 is Ownable, Pausable, IMiniSafeCommon {
      * @return success Whether the token was removed successfully
      */
     function removeSupportedToken(address tokenAddress) external onlyOwner returns (bool success) {
-        require(tokenAddress != CUSD_TOKEN_ADDRESS, "Cannot remove base token");
+        require(tokenAddress != cusdTokenAddress, "Cannot remove base token");
         require(supportedTokens[tokenAddress], "Token not supported");
         require(totalTokenDeposited[tokenAddress] == 0, "Token still has deposits");
         
@@ -126,7 +117,7 @@ contract MiniSafeTokenStorage102 is Ownable, Pausable, IMiniSafeCommon {
         
         // Always include base token
         if (currentIndex >= startIndex && counter < count) {
-            tokens[counter] = CUSD_TOKEN_ADDRESS;
+            tokens[counter] = cusdTokenAddress;
             counter++;
         }
         currentIndex++;
@@ -135,7 +126,7 @@ contract MiniSafeTokenStorage102 is Ownable, Pausable, IMiniSafeCommon {
         // This is inefficient but works for demonstration purposes
         for (uint256 i = 1; i < 100 && counter < count; i++) {
             address potentialToken = address(uint160(i));
-            if (supportedTokens[potentialToken] && potentialToken != CUSD_TOKEN_ADDRESS) {
+            if (supportedTokens[potentialToken] && potentialToken != cusdTokenAddress) {
                 if (currentIndex >= startIndex) {
                     tokens[counter] = potentialToken;
                     counter++;
@@ -190,33 +181,6 @@ contract MiniSafeTokenStorage102 is Ownable, Pausable, IMiniSafeCommon {
     }
     
     /**
-     * @dev Add incentive tokens to user balance
-     * @param user User's address
-     * @param amount Amount to add
-     */
-    function addUserIncentives(address user, uint256 amount) external onlyAuthorizedManager returns (bool) {
-        require(user != address(0), "Cannot update zero address");
-        
-        userBalances[user].tokenIncentive += amount;
-        
-        return true;
-    }
-    
-    /**
-     * @dev Remove incentive tokens from user balance
-     * @param user User's address
-     * @param amount Amount to remove
-     */
-    function removeUserIncentives(address user, uint256 amount) external onlyAuthorizedManager returns (bool) {
-        require(user != address(0), "Cannot update zero address");
-        require(userBalances[user].tokenIncentive >= amount, "Insufficient incentives");
-        
-        userBalances[user].tokenIncentive -= amount;
-        
-        return true;
-    }
-    
-    /**
      * @dev Gets a user's token share for a specific token
      * @param account User address
      * @param tokenAddress Address of token to check
@@ -224,15 +188,6 @@ contract MiniSafeTokenStorage102 is Ownable, Pausable, IMiniSafeCommon {
      */
     function getUserTokenShare(address account, address tokenAddress) public view onlyValidToken(tokenAddress) returns (uint256) {
         return userBalances[account].tokenShares[tokenAddress];
-    }
-    
-    /**
-     * @dev Gets a user's incentive balance
-     * @param account User address
-     * @return Incentive token amount
-     */
-    function getUserIncentiveBalance(address account) public view returns (uint256) {
-        return userBalances[account].tokenIncentive;
     }
     
     /**
@@ -256,24 +211,15 @@ contract MiniSafeTokenStorage102 is Ownable, Pausable, IMiniSafeCommon {
         
         emit ManagerAuthorized(manager, status);
     }
-    
+
     /**
-     * @dev Set user's upliner (called by authorized manager)
-     * @param user Address of the user
-     * @param upliner Address of the upliner
+     * @dev Decrement a user's incentive tokens
+     * @param user User's address
+     * @param amount Amount to decrement
      */
-    function setUpliner(address user, address upliner) external onlyAuthorizedManager {
-        require(user != address(0), "User cannot be zero address");
-        require(upliner != address(0), "Upliner cannot be zero address");
-        require(user != upliner, "User cannot be their own upliner");
-        require(upliners[user] == address(0), "Upliner already set");
-        
-        // Set upliner
-        upliners[user] = upliner;
-        isDownliner[upliner][user] = true;
-        downlinerCount[upliner]++;
-        
-        emit UplinerRelationshipSet(user, upliner);
+    function decrementUserIncentive(address user, uint256 amount) external onlyAuthorizedManager {
+        require(userBalances[user].tokenIncentive >= amount, "Incentive underflow");
+        userBalances[user].tokenIncentive -= amount;
     }
 }
 

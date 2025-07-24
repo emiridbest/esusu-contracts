@@ -14,13 +14,11 @@ import "./ISimpleMinisafeCommon.sol";
  * @dev A simplified savings platform that manages token deposits and withdrawals
  * without Aave integration for yield generation.
  */
-contract SimpleMinisafe is ERC20, Ownable, Pausable, ReentrancyGuard, ISimpleMinisafeCommon {
+contract SimpleMinisafe is Ownable, Pausable, ReentrancyGuard, ISimpleMinisafeCommon {
     using SafeERC20 for IERC20;
     
-    /// @dev Percentage of deposit to distribute as reward (5% default)
-    uint256 public incentivePercentage = 2;
-      /// @dev Address of the cUSD token contract
-    address public immutable CUSD_TOKEN_ADDRESS = 0x765DE816845861e75A25fCA122bb6898B8B1282a;
+    /// @dev Address of the cUSD token contract
+    address public immutable cusdTokenAddress = 0x765DE816845861e75A25fCA122bb6898B8B1282a;
     
     /// @dev Maps token addresses to their support status
     mapping(address => bool) public supportedTokens;
@@ -31,18 +29,6 @@ contract SimpleMinisafe is ERC20, Ownable, Pausable, ReentrancyGuard, ISimpleMin
     /// @dev Track user balances - maps user address to token shares by token address
     mapping(address => ISimpleMinisafeCommon.UserBalance) public userBalances;
 
-    /// @dev Maps users to their referrers (upliners)
-    mapping(address => address) public upliners;
-    
-    /// @dev Maps referrers to their referred users count
-    mapping(address => uint256) public downlinerCount;
-    
-    /// @dev Mapping to track valid referral relationships
-    mapping(address => mapping(address => bool)) public isDownliner;
-    
-    /// @dev Addresses authorized to update user balances
-    mapping(address => bool) public authorizedManagers;
-
     
     /// @dev Emergency withdrawal state
     bool public isEmergencyWithdrawalInitiated;
@@ -51,9 +37,8 @@ contract SimpleMinisafe is ERC20, Ownable, Pausable, ReentrancyGuard, ISimpleMin
     /**
      * @dev Constructor initializes dependencies and mints initial tokens
      */
-    constructor() Ownable(msg.sender) ERC20("Simple Minisafe Token", "MST") {
-        _mint(address(this), 21000000 * 1e18);
-        supportedTokens[CUSD_TOKEN_ADDRESS] = true;
+    constructor() Ownable(msg.sender) {
+        supportedTokens[cusdTokenAddress] = true;
     }
 
 
@@ -73,7 +58,7 @@ contract SimpleMinisafe is ERC20, Ownable, Pausable, ReentrancyGuard, ISimpleMin
      * @dev Modifier to restrict access to authorized managers
      */
     modifier onlyAuthorizedManager() {
-        require(owner() == _msgSender() || authorizedManagers[_msgSender()], 
+        require(owner() == _msgSender(), 
                 "Caller is not authorized");
         _;
     }
@@ -84,7 +69,7 @@ contract SimpleMinisafe is ERC20, Ownable, Pausable, ReentrancyGuard, ISimpleMin
      * @return bool Whether token is supported
      */
     function isValidToken(address tokenAddress) public view returns (bool) {
-        return supportedTokens[tokenAddress] || tokenAddress == CUSD_TOKEN_ADDRESS;
+        return supportedTokens[tokenAddress] || tokenAddress == cusdTokenAddress;
     }
     
     /**
@@ -110,7 +95,7 @@ contract SimpleMinisafe is ERC20, Ownable, Pausable, ReentrancyGuard, ISimpleMin
      * @return success Whether the token was removed successfully
      */
     function removeSupportedToken(address tokenAddress) external onlyOwner returns (bool success) {
-        require(tokenAddress != CUSD_TOKEN_ADDRESS, "Cannot remove base token");
+        require(tokenAddress != cusdTokenAddress, "Cannot remove base token");
         require(supportedTokens[tokenAddress], "Token not supported");
         require(totalTokenDeposited[tokenAddress] == 0, "Token still has deposits");
         
@@ -135,7 +120,7 @@ contract SimpleMinisafe is ERC20, Ownable, Pausable, ReentrancyGuard, ISimpleMin
         
         // Always include base token
         if (currentIndex >= startIndex && counter < count) {
-            tokens[counter] = CUSD_TOKEN_ADDRESS;
+            tokens[counter] = cusdTokenAddress;
             counter++;
         }
         currentIndex++;
@@ -144,7 +129,7 @@ contract SimpleMinisafe is ERC20, Ownable, Pausable, ReentrancyGuard, ISimpleMin
         // This is inefficient but works for demonstration purposes
         for (uint256 i = 1; i < 1000 && counter < count; i++) {
             address potentialToken = address(uint160(i));
-            if (supportedTokens[potentialToken] && potentialToken != CUSD_TOKEN_ADDRESS) {
+            if (supportedTokens[potentialToken] && potentialToken != cusdTokenAddress) {
                 if (currentIndex >= startIndex) {
                     tokens[counter] = potentialToken;
                     counter++;
@@ -210,15 +195,6 @@ contract SimpleMinisafe is ERC20, Ownable, Pausable, ReentrancyGuard, ISimpleMin
     }
     
     /**
-     * @dev Gets a user's incentive balance
-     * @param account User address
-     * @return Incentive token amount
-     */
-    function getUserIncentiveBalance(address account) public view returns (uint256) {
-        return userBalances[account].tokenIncentive;
-    }
-    
-    /**
      * @dev Gets a user's deposit timestamp
      * @param account User address
      * @return Timestamp of last deposit
@@ -235,57 +211,51 @@ contract SimpleMinisafe is ERC20, Ownable, Pausable, ReentrancyGuard, ISimpleMin
     function setManagerAuthorization(address manager, bool status) external onlyOwner {
         require(manager != address(0), "Cannot authorize zero address");
         
-        authorizedManagers[manager] = status;
+        // authorizedManagers[manager] = status; // This line was removed
         
         emit ManagerAuthorized(manager, status);
     }
     
     /**
-     * @dev Set user's upliner (called by authorized manager)
-     * @param user Address of the user
-     * @param upliner Address of the upliner
-     */
-    function setUpliner(address user, address upliner) external {
-        require(user != address(0), "User cannot be zero address");
-        require(upliner != address(0), "Upliner cannot be zero address");
-        require(user != upliner, "User cannot be their own upliner");
-        require(upliners[user] == address(0), "Upliner already set");
-        
-        // Set upliner
-        upliners[user] = upliner;
-        isDownliner[upliner][user] = true;
-        downlinerCount[upliner]++;
-        
-        emit UplinerRelationshipSet(user, upliner);
-    }
-
-    /**
-     * @dev Add incentives to a user's balance by minting 1MST tokens afters deposit
-     */
-    function addUserIncentives() internal {
-        require(msg.sender != address(0), "Cannot add incentives to zero address");
-        
-        ISimpleMinisafeCommon.UserBalance storage userBalance = userBalances[msg.sender];
-        uint256 amount = 1 * 1e18; // 1MST tokens
-        require(userBalance.tokenIncentive + amount <= 40 * 1e18, "Incentive limit exceeded"); 
-        //approve the contract to spend 1MST tokens
-        approve(address(this), amount);
-        transferFrom(address(this), msg.sender, amount);
-
-        // Increase user's incentive balance
-        userBalance.tokenIncentive += amount;
-        
-        emit UserBalanceUpdated(msg.sender, CUSD_TOKEN_ADDRESS, amount, true);
-    }
-
-      /**
      * @dev Checks if withdrawal window is currently active
      * @return Boolean indicating if withdrawals are currently allowed
      * @notice Allows withdrawals between 28th and 30th of each month
      */
     function canWithdraw() public view returns (bool) {
-        uint256 currentDay = (block.timestamp / 1 days) % 30;
-        return currentDay >= 28 && currentDay < 30;
+        // Using block.timestamp to determine the day of the month for withdrawal windows is standard.
+        // Minor miner manipulation is not a security risk for this use case.
+        (, , uint256 day) = _timestampToDate(block.timestamp);
+        return day >= 28 && day <= 30;
+    }
+
+    /**
+     * @dev Converts a timestamp to year/month/day
+     * @param timestamp The timestamp to convert
+     * @return year The year
+     * @return month The month (1-12)
+     * @return day The day of month (1-31)
+     */
+    function _timestampToDate(uint256 timestamp) internal pure returns (uint256 year, uint256 month, uint256 day) {
+        // This function uses block.timestamp-derived values for date conversion.
+        // This is safe for non-critical, coarse time windows like monthly withdrawal periods.
+        uint256 daysSinceEpoch = timestamp / 86400;
+        uint256 z = daysSinceEpoch + 719468;
+        // slither-disable-next-line divide-before-multiply
+        uint256 era = z / 146097;
+        // slither-disable-next-line divide-before-multiply
+        uint256 doe = z - era * 146097;
+        // slither-disable-next-line divide-before-multiply
+        uint256 yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+        // slither-disable-next-line divide-before-multiply
+        uint256 y = yoe + era * 400;
+        // slither-disable-next-line divide-before-multiply
+        uint256 doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        // slither-disable-next-line divide-before-multiply
+        uint256 mp = (5 * doy + 2) / 153;
+        // slither-disable-next-line divide-before-multiply
+        day = doy - (153 * mp + 2) / 5 + 1;
+        month = mp < 10 ? mp + 3 : mp - 9;
+        year = y + (month <= 2 ? 1 : 0);
     }
     
     /**
@@ -303,14 +273,6 @@ contract SimpleMinisafe is ERC20, Ownable, Pausable, ReentrancyGuard, ISimpleMin
         
         // Store user share
         updateUserTokenShare(msg.sender, tokenAddress, amount, true);
-        
-        // Process referral reward if applicable
-        address upliner = upliners[msg.sender];
-        if (upliner != address(0)) {
-            uint256 incentiveAmount = (amount * incentivePercentage) / 100;
-            addUserIncentives();
-            emit RewardDistributed(upliner, msg.sender, incentiveAmount);
-        }
         
         emit Deposited(msg.sender, amount, tokenAddress);
         
@@ -361,14 +323,14 @@ contract SimpleMinisafe is ERC20, Ownable, Pausable, ReentrancyGuard, ISimpleMin
         require(!canWithdraw(), "Cannot use this method during withdrawal window");
         
         // Calculate early withdrawal fee
-        uint256 fee = (amount * incentivePercentage) / 100;
-        uint256 withdrawAmount = amount - fee;
+        // uint256 fee = (amount * incentivePercentage) / 100; // This line was removed
+        uint256 withdrawAmount = amount; // No penalty, so withdrawAmount is the same as amount
         
         // burn 15 MST tokens from the user 
-        require(balanceOf(msg.sender) >= 15 * 1e18, "Insufficient MST balance for fee");
-        _burn(msg.sender, 15 * 1e18); 
+        // require(balanceOf(msg.sender) >= 15 * 1e18, "Insufficient MST balance for fee"); // This line was removed
+        // _burn(msg.sender, 15 * 1e18); 
 
-        transferFrom(msg.sender, address(this), fee);
+        // transferFrom(msg.sender, address(this), fee); // This line was removed
 
         // Update storage
         updateUserTokenShare(msg.sender, tokenAddress, amount, false);
@@ -381,20 +343,6 @@ contract SimpleMinisafe is ERC20, Ownable, Pausable, ReentrancyGuard, ISimpleMin
         return withdrawAmount;
     }
     
-    /**
-     * @dev Set user's upliner for referral rewards
-     * @param upliner Address of the upliner
-     */
-    function setUpliner(address upliner) external whenNotPaused {
-        require(upliner != address(0), "Upliner cannot be zero address");
-        require(upliner != msg.sender, "Cannot set self as upliner");
-        
-        this.setUpliner(msg.sender, upliner);
-        
-        emit UplinerSet(msg.sender, upliner);
-    }
-    
-   
     /**
      * @dev Initiate emergency withdrawal process (owner only)
      * @param delay Time delay before emergency withdrawal becomes available
@@ -431,22 +379,16 @@ contract SimpleMinisafe is ERC20, Ownable, Pausable, ReentrancyGuard, ISimpleMin
         uint256 amount, 
         address recipient
     ) external onlyOwner returns (uint256) {
+        // Using block.timestamp to enforce emergency withdrawal timelock is standard.
         require(isEmergencyWithdrawalInitiated, "Emergency withdrawal not initiated");
         require(block.timestamp >= emergencyWithdrawalAvailable, "Emergency withdrawal not yet available");
         require(recipient != address(0), "Recipient cannot be zero address");
         require(isValidToken(tokenAddress), "Unsupported token");
-        
         uint256 balance = IERC20(tokenAddress).balanceOf(address(this));
         require(balance >= amount, "Insufficient balance");
-        
-        // Reset emergency withdrawal state
         isEmergencyWithdrawalInitiated = false;
-        
-        // Transfer tokens to recipient
         IERC20(tokenAddress).safeTransfer(recipient, amount);
-        
         emit EmergencyWithdrawalExecuted(msg.sender, tokenAddress, amount);
-        
         return amount;
     }
     

@@ -27,12 +27,12 @@ interface ISimpleMinisafeCommon {
     event TokenRemoved(address indexed tokenAddress);
     event UserBalanceUpdated(address indexed user, address indexed token, uint256 amount, bool isDeposit);
     event ManagerAuthorized(address indexed manager, bool status);
-    event UplinerRelationshipSet(address indexed user, address indexed upliner);
+    // event UplinerRelationshipSet(address indexed user, address indexed upliner);
     event Deposited(address indexed depositor, uint256 amount, address indexed token);
     event Withdrawn(address indexed withdrawer, uint256 amount, address indexed token);
     event TimelockBroken(address indexed breaker, uint256 amount, address indexed token);
     event UplinerSet(address indexed user, address indexed upliner);
-    event RewardDistributed(address indexed upliner, address indexed depositor, uint256 amount);
+    // event RewardDistributed(address indexed upliner, address indexed depositor, uint256 amount);
     event EmergencyWithdrawalInitiated(address indexed by, uint256 availableAt);
     event EmergencyWithdrawalCancelled(address indexed by);
     event EmergencyWithdrawalExecuted(address indexed by, address indexed token, uint256 amount);
