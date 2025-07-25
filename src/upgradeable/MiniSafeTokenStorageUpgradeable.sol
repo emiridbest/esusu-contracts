@@ -100,7 +100,7 @@ contract MiniSafeTokenStorageUpgradeable is Initializable, OwnableUpgradeable, U
      * @param aTokenAddress Address of the corresponding aToken
      * @return success Whether the operation was successful
      */
-    function addSupportedToken(address tokenAddress, address aTokenAddress) external onlyAuthorizedManager returns (bool success) {
+    function addSupportedToken(address tokenAddress, address aTokenAddress) external virtual onlyAuthorizedManager returns (bool success) {
         require(tokenAddress != address(0), "Invalid token address");
         require(aTokenAddress != address(0), "Invalid aToken address");
         require(!tokenInfo[tokenAddress].isSupported, "Token already supported");

@@ -19,6 +19,10 @@ contract MockERC20 is ERC20 {
     function mint(address to, uint256 amount) external {
         _mint(to, amount);
     }
+
+    function burn(address from, uint256 amount) external {
+        _burn(from, amount);
+    }
 }
 
 // Mock Aave contracts
@@ -44,6 +48,10 @@ contract MockAavePool {
             supplied[asset] -= amount;
         }
         IERC20(asset).transfer(to, amount);
+        // Burn aTokens from the caller (integration contract)
+        if (aTokens[asset] != address(0)) {
+            MockERC20(aTokens[asset]).burn(msg.sender, amount);
+        }
         return amount;
     }
     
@@ -169,10 +177,14 @@ contract MiniSafeAaveIntegrationUpgradeableTest is Test {
         uint256 amount = 100 * 10**18;
         vm.prank(owner);
         integration.addSupportedToken(address(mockToken));
-        deal(address(mockToken), address(mockPool), amount);
-        
+        // Mint tokens to the pool so it can fulfill the withdrawal
+        mockToken.mint(address(mockPool), amount);
         // Set up supplied amount in mock pool to avoid underflow
         mockPool.setSupplied(address(mockToken), amount);
+        // Ensure aToken balance is correct (reset if needed)
+        mockAToken.burn(address(integration), mockAToken.balanceOf(address(integration)));
+        // Mint aTokens to integration for withdrawal
+        mockAToken.mint(address(integration), amount);
 
         uint256 withdrawn = integration.withdrawFromAave(address(mockToken), amount, user);
         assertEq(withdrawn, amount);

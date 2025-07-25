@@ -28,6 +28,9 @@ contract MockAToken is ERC20 {
     function mint(address to, uint256 amount) external {
         _mint(to, amount);
     }
+    function burn(address from, uint256 amount) external {
+        _burn(from, amount);
+    }
 }
 
 // Mock Aave Pool
@@ -47,6 +50,9 @@ contract MockAavePool {
     function withdraw(address asset, uint256 amount, address to) external returns (uint256) {
         // Simulate successful withdrawal without requiring aToken allowance
         IERC20(asset).transfer(to, amount);
+        if (aTokens[asset] != address(0)) {
+            MockAToken(aTokens[asset]).burn(msg.sender, amount);
+        }
         return amount;
     }
 }
