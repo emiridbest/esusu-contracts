@@ -2,7 +2,7 @@
 pragma solidity ^0.8.29;
 
 import "forge-std/Script.sol";
-import "../src/upgradeable/MiniSafeFactoryUpgradeable.sol";
+import "../src/MiniSafeFactoryUpgradeable.sol";
 
 /**
  * @title DeployUpgradeable

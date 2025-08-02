@@ -2,18 +2,20 @@
 pragma solidity ^0.8.29;
 
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "./IMiniSafeCommon.sol";
 
 /**
  * @title MiniSafeTokenStorageUpgradeable
  * @dev Upgradeable token storage system for managing user balances and supported tokens
  */
-contract MiniSafeTokenStorageUpgradeable is Initializable, OwnableUpgradeable, UUPSUpgradeable {
+contract MiniSafeTokenStorageUpgradeable is Initializable, OwnableUpgradeable, PausableUpgradeable, UUPSUpgradeable, IMiniSafeCommon {
     
-    /// @dev Struct for user balance information
-    struct UserBalance {
+    /// @dev Struct for user balance information (internal use)
+    struct InternalUserBalance {
         mapping(address => uint256) tokenShares;
         mapping(address => uint256) depositTime;
         uint256 tokenIncentive;
@@ -27,7 +29,7 @@ contract MiniSafeTokenStorageUpgradeable is Initializable, OwnableUpgradeable, U
     }
 
     /// @dev Mapping from user address to their balance info
-    mapping(address => UserBalance) public userBalances;
+    mapping(address => InternalUserBalance) public userBalances;
 
     /// @dev Mapping from token address to token info
     mapping(address => TokenInfo) public tokenInfo;
@@ -41,11 +43,7 @@ contract MiniSafeTokenStorageUpgradeable is Initializable, OwnableUpgradeable, U
     /// @dev Default cUSD token address (Celo)
     address public cusdTokenAddress;
 
-    /// @dev Events
-    event TokenAdded(address indexed tokenAddress, address indexed aTokenAddress);
-    event TokenRemoved(address indexed tokenAddress);
-    event UserSharesUpdated(address indexed user, address indexed token, uint256 shares, bool isDeposit);
-    event ManagerAuthorizationChanged(address indexed manager, bool authorized);
+    /// @dev Events (inherited from IMiniSafeCommon)
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -58,6 +56,7 @@ contract MiniSafeTokenStorageUpgradeable is Initializable, OwnableUpgradeable, U
      */
     function initialize(address _initialOwner) external initializer {
         __Ownable_init(_initialOwner);
+        __Pausable_init();
         __UUPSUpgradeable_init();
         
         // Set default cUSD address for Celo
@@ -77,11 +76,32 @@ contract MiniSafeTokenStorageUpgradeable is Initializable, OwnableUpgradeable, U
     }
 
     /**
+     * @dev Modifier to check if a token is supported
+     */
+    modifier onlyValidToken(address tokenAddress) {
+        require(
+            isValidToken(tokenAddress),
+            "Unsupported token"
+        );
+        _;
+    }
+
+    /**
      * @dev Modifier to restrict access to authorized managers
      */
     modifier onlyAuthorizedManager() {
-        require(authorizedManagers[msg.sender] || msg.sender == owner(), "Unauthorized");
+        require(owner() == _msgSender() || authorizedManagers[_msgSender()], 
+                "Caller is not authorized");
         _;
+    }
+
+    /**
+     * @dev Checks if a token is supported
+     * @param tokenAddress Address of token to check
+     * @return bool Whether token is supported
+     */
+    function isValidToken(address tokenAddress) public view returns (bool) {
+        return tokenInfo[tokenAddress].isSupported || tokenAddress == cusdTokenAddress;
     }
 
     /**
@@ -90,9 +110,12 @@ contract MiniSafeTokenStorageUpgradeable is Initializable, OwnableUpgradeable, U
      * @param authorized Whether the manager is authorized
      */
     function setManagerAuthorization(address manager, bool authorized) external onlyOwner {
+        require(manager != address(0), "Cannot authorize zero address");
         authorizedManagers[manager] = authorized;
-        emit ManagerAuthorizationChanged(manager, authorized);
+        emit ManagerAuthorized(manager, authorized);
     }
+
+
 
     /**
      * @dev Add a new supported token
@@ -101,8 +124,8 @@ contract MiniSafeTokenStorageUpgradeable is Initializable, OwnableUpgradeable, U
      * @return success Whether the operation was successful
      */
     function addSupportedToken(address tokenAddress, address aTokenAddress) external virtual onlyAuthorizedManager returns (bool success) {
-        require(tokenAddress != address(0), "Invalid token address");
-        require(aTokenAddress != address(0), "Invalid aToken address");
+        require(tokenAddress != address(0), "Cannot add zero address as token");
+        require(aTokenAddress != address(0), "aToken address cannot be zero");
         require(!tokenInfo[tokenAddress].isSupported, "Token already supported");
 
         tokenInfo[tokenAddress] = TokenInfo({
@@ -122,8 +145,9 @@ contract MiniSafeTokenStorageUpgradeable is Initializable, OwnableUpgradeable, U
      * @return success Whether the operation was successful
      */
     function removeSupportedToken(address tokenAddress) external onlyOwner returns (bool success) {
+        require(tokenAddress != cusdTokenAddress, "Cannot remove base token");
         require(tokenInfo[tokenAddress].isSupported, "Token not supported");
-        require(tokenInfo[tokenAddress].totalShares == 0, "Token has active shares");
+        require(tokenInfo[tokenAddress].totalShares == 0, "Token still has deposits");
 
         tokenInfo[tokenAddress].isSupported = false;
         
@@ -141,6 +165,45 @@ contract MiniSafeTokenStorageUpgradeable is Initializable, OwnableUpgradeable, U
     }
 
     /**
+     * @dev Get list of all supported tokens with pagination
+     * @param startIndex Starting index for pagination
+     * @param count Maximum number of tokens to return
+     * @return tokens Array of supported token addresses
+     */
+    function getSupportedTokens(uint256 startIndex, uint256 count) external view returns (address[] memory tokens) {
+        tokens = new address[](count);
+        
+        uint256 counter = 0;
+        uint256 currentIndex = 0;
+        
+        // Always include base token
+        if (currentIndex >= startIndex && counter < count) {
+            tokens[counter] = cusdTokenAddress;
+            counter++;
+        }
+        currentIndex++;
+        
+        // Add supported tokens from array
+        for (uint256 i = 0; i < supportedTokens.length && counter < count; i++) {
+            if (currentIndex >= startIndex) {
+                tokens[counter] = supportedTokens[i];
+                counter++;
+            }
+            currentIndex++;
+        }
+        
+        return tokens;
+    }
+
+    /**
+     * @dev Get all supported tokens (no pagination)
+     * @return tokens Array of supported token addresses
+     */
+    function getSupportedTokens() external view returns (address[] memory tokens) {
+        return supportedTokens;
+    }
+
+    /**
      * @dev Update user token shares
      * @param user Address of the user
      * @param tokenAddress Address of the token
@@ -153,11 +216,10 @@ contract MiniSafeTokenStorageUpgradeable is Initializable, OwnableUpgradeable, U
         address tokenAddress,
         uint256 shareAmount,
         bool isDeposit
-    ) external onlyAuthorizedManager returns (bool success) {
-        require(tokenInfo[tokenAddress].isSupported, "Token not supported");
-        require(user != address(0), "Invalid user address");
-
-        UserBalance storage userBalance = userBalances[user];
+    ) external onlyAuthorizedManager onlyValidToken(tokenAddress) returns (bool success) {
+        require(user != address(0), "Cannot update zero address");
+        
+        InternalUserBalance storage userBalance = userBalances[user];
 
         if (isDeposit) {
             userBalance.tokenShares[tokenAddress] += shareAmount;
@@ -169,7 +231,7 @@ contract MiniSafeTokenStorageUpgradeable is Initializable, OwnableUpgradeable, U
             tokenInfo[tokenAddress].totalShares -= shareAmount;
         }
 
-        emit UserSharesUpdated(user, tokenAddress, shareAmount, isDeposit);
+        emit UserBalanceUpdated(user, tokenAddress, shareAmount, isDeposit);
         return true;
     }
 
@@ -179,7 +241,7 @@ contract MiniSafeTokenStorageUpgradeable is Initializable, OwnableUpgradeable, U
      * @param tokenAddress Address of the token
      * @return shares User's token shares
      */
-    function getUserTokenShare(address user, address tokenAddress) external view returns (uint256 shares) {
+    function getUserTokenShare(address user, address tokenAddress) public view onlyValidToken(tokenAddress) returns (uint256 shares) {
         return userBalances[user].tokenShares[tokenAddress];
     }
 
@@ -190,17 +252,35 @@ contract MiniSafeTokenStorageUpgradeable is Initializable, OwnableUpgradeable, U
      * @return timestamp Deposit timestamp
      */
     function getUserDepositTime(address user, address tokenAddress) external view returns (uint256 timestamp) {
+        if (!isValidToken(tokenAddress)) {
+            return 0;
+        }
         return userBalances[user].depositTime[tokenAddress];
     }
 
     /**
-     * @dev Check if a token is supported
-     * @param tokenAddress Address of the token
-     * @return supported Whether the token is supported
+     * @dev Gets a user's deposit timestamp (legacy function)
+     * @param account User address
+     * @return Timestamp of last deposit
      */
-    function isValidToken(address tokenAddress) external view returns (bool supported) {
-        return tokenInfo[tokenAddress].isSupported;
+    function getUserDepositTime(address account) public view returns (uint256) {
+        // Return the most recent deposit time across all tokens
+        uint256 latestTime = 0;
+        for (uint256 i = 0; i < supportedTokens.length; i++) {
+            uint256 tokenTime = userBalances[account].depositTime[supportedTokens[i]];
+            if (tokenTime > latestTime) {
+                latestTime = tokenTime;
+            }
+        }
+        // Also check cUSD
+        uint256 cusdTime = userBalances[account].depositTime[cusdTokenAddress];
+        if (cusdTime > latestTime) {
+            latestTime = cusdTime;
+        }
+        return latestTime;
     }
+
+
 
     /**
      * @dev Get aToken address for a token
@@ -208,7 +288,7 @@ contract MiniSafeTokenStorageUpgradeable is Initializable, OwnableUpgradeable, U
      * @return aTokenAddress Address of the aToken
      */
     function getTokenATokenAddress(address tokenAddress) external view returns (address aTokenAddress) {
-        require(tokenInfo[tokenAddress].isSupported, "Token not supported");
+        require(tokenInfo[tokenAddress].isSupported || tokenAddress == cusdTokenAddress, "Token not supported");
         return tokenInfo[tokenAddress].aTokenAddress;
     }
 
@@ -218,15 +298,10 @@ contract MiniSafeTokenStorageUpgradeable is Initializable, OwnableUpgradeable, U
      * @return totalShares Total shares for the token
      */
     function getTotalShares(address tokenAddress) external view returns (uint256 totalShares) {
+        if (!isValidToken(tokenAddress)) {
+            return 0;
+        }
         return tokenInfo[tokenAddress].totalShares;
-    }
-
-    /**
-     * @dev Get all supported tokens
-     * @return tokens Array of supported token addresses
-     */
-    function getSupportedTokens() external view returns (address[] memory tokens) {
-        return supportedTokens;
     }
 
     /**
@@ -255,5 +330,19 @@ contract MiniSafeTokenStorageUpgradeable is Initializable, OwnableUpgradeable, U
     function decrementUserIncentive(address user, uint256 amount) external onlyAuthorizedManager {
         require(userBalances[user].tokenIncentive >= amount, "Incentive underflow");
         userBalances[user].tokenIncentive -= amount;
+    }
+
+    /**
+     * @dev Pause the contract (only owner)
+     */
+    function pause() external onlyOwner {
+        _pause();
+    }
+
+    /**
+     * @dev Unpause the contract (only owner)
+     */
+    function unpause() external onlyOwner {
+        _unpause();
     }
 } 

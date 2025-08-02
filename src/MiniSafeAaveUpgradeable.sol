@@ -1,20 +1,30 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.29;
 
-import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import "@openzeppelin/contracts/utils/Pausable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "./IMiniSafeCommon.sol";
-import "./MiniSafeTokenStorage.sol";
-import "./MiniSafeAaveIntegration.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
+import "./MiniSafeTokenStorageUpgradeable.sol";
+import "./MiniSafeAaveIntegrationUpgradeable.sol";
 
 /**
- * @title MiniSafeAave
- * @dev A decentralized savings platform with Aave V3 integration, custom token support, and thrift functionality
- * Allows users to deposit cUSD and other supported tokens to earn yield through Aave, and participate in thrift groups
+ * @title MiniSafeAaveUpgradeable
+ * @dev Upgradeable version of MiniSafeAave - A decentralized savings platform with Aave V3 integration
+ * @dev Uses UUPS proxy pattern to maintain the same address across upgrades
+ * @dev Controlled by timelock governance for secure upgrades
  */
-contract MiniSafeAave102 is ReentrancyGuard, Pausable, Ownable, IMiniSafeCommon {
+contract MiniSafeAaveUpgradeable is 
+    Initializable,
+    ReentrancyGuardUpgradeable, 
+    PausableUpgradeable, 
+    OwnableUpgradeable,
+    UUPSUpgradeable,
+    IMiniSafeCommon 
+{
     using SafeERC20 for IERC20;
     
     /// @dev Minimum deposit amount to prevent spam transactions
@@ -22,6 +32,15 @@ contract MiniSafeAave102 is ReentrancyGuard, Pausable, Ownable, IMiniSafeCommon 
     
     /// @dev Emergency timelock duration for critical functions
     uint256 public constant EMERGENCY_TIMELOCK = 2 days;
+    
+    /// @dev Maximum number of members per thrift group
+    uint256 public constant MAX_MEMBERS = 5;
+    
+    /// @dev Standard contribution cycle duration (30 days)
+    uint256 public constant CYCLE_DURATION = 30 days;
+    
+    /// @dev Minimum contribution amount to prevent spam
+    uint256 public constant MIN_CONTRIBUTION = 0.01 ether;
     
     /// @dev Timestamp for emergency withdrawal availability
     uint256 public emergencyWithdrawalAvailableAt;
@@ -31,27 +50,21 @@ contract MiniSafeAave102 is ReentrancyGuard, Pausable, Ownable, IMiniSafeCommon 
     uint256 public timeBetweenWithdrawalsThreshold;
     uint256 public lastWithdrawalTimestamp;
     
-    /// @dev Token storage contract
-    MiniSafeTokenStorage102 public immutable tokenStorage;
+    /// @dev Token storage contract (not immutable for upgradeability)
+    MiniSafeTokenStorageUpgradeable public tokenStorage;
     
-    /// @dev Aave integration contract
-    MiniSafeAaveIntegration public immutable aaveIntegration;
+    /// @dev Aave integration contract (not immutable for upgradeability)
+    MiniSafeAaveIntegrationUpgradeable public aaveIntegration;
 
     // THRIFT FUNCTIONALITY
-    /// @dev Maximum number of members per thrift group
-    uint256 public constant MAX_MEMBERS = 5;
-    
-    /// @dev Standard contribution cycle duration (30 days)
-    uint256 public constant CYCLE_DURATION = 30 days;
-    
-    /// @dev Minimum contribution amount to prevent spam
-    uint256 public constant MIN_CONTRIBUTION = 0.01 ether;
-
     /// @dev Total number of thrift groups created
     uint256 public totalThriftGroups;
     
     /// @dev Total number of payouts processed
     uint256 public totalPayouts;
+
+    /// @dev Array of all thrift groups
+    ThriftGroup[] public thriftGroups;
 
     /// @dev Struct representing a thrift group
     struct ThriftGroup {
@@ -73,9 +86,6 @@ contract MiniSafeAave102 is ReentrancyGuard, Pausable, Ownable, IMiniSafeCommon 
         bool isActive;
         bool isPublic; // Public groups allow anyone to join, private require admin approval
     }
-
-    /// @dev Array of all thrift groups
-    ThriftGroup[] public thriftGroups;
 
     /// @dev Struct for recording payouts
     struct Payout {
@@ -108,43 +118,53 @@ contract MiniSafeAave102 is ReentrancyGuard, Pausable, Ownable, IMiniSafeCommon 
     event GroupDeactivated(uint256 indexed groupId);
     event RefundIssued(uint256 indexed groupId, address indexed member, uint256 amount);
 
+    // Standard events are inherited from IMiniSafeCommon
+
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
     /**
-     * @dev Initialize the contract with dependencies
+     * @dev Initialize the upgradeable contract
+     * @param _tokenStorage Address of the MiniSafeTokenStorageUpgradeable contract
+     * @param _aaveIntegration Address of the MiniSafeAaveIntegrationUpgradeable contract
+     * @param _initialOwner Address of the initial owner (should be timelock)
      */
-    constructor(address _aavePoolAddressesProvider) Ownable(msg.sender) {
-        tokenStorage = new MiniSafeTokenStorage102();
-        address provider = _aavePoolAddressesProvider == address(0)
-            ? 0x9F7Cf9417D5251C59fE94fB9147feEe1aAd9Cea5
-            : _aavePoolAddressesProvider;
-        aaveIntegration = new MiniSafeAaveIntegration(address(tokenStorage), provider);
-        tokenStorage.setManagerAuthorization(address(aaveIntegration), true);
+    function initialize(
+        address _tokenStorage,
+        address _aaveIntegration,
+        address _initialOwner
+    ) external initializer {
+        __ReentrancyGuard_init();
+        __Pausable_init();
+        __Ownable_init(_initialOwner);
+        __UUPSUpgradeable_init();
+
+        // CEI Pattern: Initialize all state variables BEFORE external calls
         withdrawalAmountThreshold = 1000 ether;
         timeBetweenWithdrawalsThreshold = 5 minutes;
-        tokenStorage.setManagerAuthorization(address(this), true);
+
+        // Set storage references
+        tokenStorage = MiniSafeTokenStorageUpgradeable(_tokenStorage);
+        aaveIntegration = MiniSafeAaveIntegrationUpgradeable(_aaveIntegration);
+
+        // Manager authorizations must be granted by the owner **after** proxy deployment.
+        // This avoids onlyOwner reverts during proxy construction where `msg.sender`
+        // is the deploying factory/test contract rather than the designated `owner`.
     }
-    
+
     /**
-     * @dev Deposit any supported ERC20 token into savings and then to Aave
-     * @param tokenAddress Address of token being deposited
-     * @param amount Amount of tokens to deposit
+     * @dev Authorize upgrade - only owner (timelock) can upgrade
+     * @param newImplementation Address of the new implementation
      */
-    function deposit(address tokenAddress, uint256 amount) public nonReentrant whenNotPaused {
-        require(tokenStorage.isValidToken(tokenAddress), "Unsupported token");
-        require(amount >= MIN_DEPOSIT, "Deposit amount must meet minimum");
-        
-        // First transfer tokens to this contract
-        IERC20(tokenAddress).safeTransferFrom(msg.sender, address(this), amount);
-        
-        // Approve the aave integration to spend the tokens
-        SafeERC20.forceApprove(IERC20(tokenAddress), address(aaveIntegration), amount);
-        
-        // Deposit to Aave
-        uint256 sharesReceived = aaveIntegration.depositToAave(tokenAddress, amount);
-        
-        // Update user's balance in the token storage
-        updateUserBalance(msg.sender, tokenAddress, sharesReceived, true);
-        
-        emit Deposited(msg.sender, amount, tokenAddress, sharesReceived);
+    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
+
+    /**
+     * @dev Get implementation version for upgrade tracking
+     */
+    function version() external pure virtual returns (string memory) {
+        return "1.0.0";
     }
 
     /**
@@ -158,17 +178,33 @@ contract MiniSafeAave102 is ReentrancyGuard, Pausable, Ownable, IMiniSafeCommon 
         // Update the user's balance in the token storage
         bool success = tokenStorage.updateUserTokenShare(user, tokenAddress, shareAmount, isDeposit);
         require(success, "Failed to update user token share");
-        // If this is a deposit, update the deposit time in our storage too
-        if (isDeposit) {
-            // The deposit time is already updated in the token storage as part of updateUserTokenShare
-            // No need to do anything extra here
-        }
+    }
+
+    /**
+     * @dev Deposit any supported ERC20 token into savings and then to Aave
+     * @param tokenAddress Address of token being deposited
+     * @param amount Amount of tokens to deposit
+     */
+    function deposit(address tokenAddress, uint256 amount) external nonReentrant whenNotPaused {
+        require(tokenStorage.isValidToken(tokenAddress), "Unsupported token");
+        require(amount >= MIN_DEPOSIT, "Deposit amount too small");
+        
+        // Transfer tokens from user to Aave integration contract
+        IERC20(tokenAddress).safeTransferFrom(msg.sender, address(aaveIntegration), amount);
+        
+        // Deposit to Aave and get shares
+        uint256 sharesReceived = aaveIntegration.depositToAave(tokenAddress, amount);
+        
+        // Update user's balance
+        updateUserBalance(msg.sender, tokenAddress, sharesReceived, true);
+        
+        emit Deposited(msg.sender, amount, tokenAddress, sharesReceived);
     }
 
     /**
      * @dev Withdraw tokens from the protocol
      * @param tokenAddress Address of token to withdraw
-     * @param amount Amount of tokens to withdraw
+     * @param amount Amount to withdraw
      */
     function withdraw(address tokenAddress, uint256 amount) external nonReentrant whenNotPaused {
         require(tokenStorage.isValidToken(tokenAddress), "Unsupported token");
@@ -188,9 +224,9 @@ contract MiniSafeAave102 is ReentrancyGuard, Pausable, Ownable, IMiniSafeCommon 
         require(withdrawn == amount, "Withdrawn amount mismatch");
         emit Withdrawn(msg.sender, amount, tokenAddress, amount);
     }
-    
+
     /**
-     * @dev Internal function to check if circuit breaker should be triggered
+     * @dev Check circuit breaker conditions
      * @param withdrawAmount Amount being withdrawn
      */
     function _checkCircuitBreaker(uint256 withdrawAmount) internal {
@@ -211,16 +247,20 @@ contract MiniSafeAave102 is ReentrancyGuard, Pausable, Ownable, IMiniSafeCommon 
         // Update last withdrawal timestamp
         lastWithdrawalTimestamp = block.timestamp;
     }
-    
+
     /**
-     * @dev Triggers the circuit breaker and pauses the contract
-     * @param reason Reason for triggering
+     * @dev Trigger circuit breaker by pausing the contract
+     * @param reason Reason for triggering circuit breaker
      */
     function _triggerCircuitBreaker(string memory reason) internal {
         _pause();
-        emit CircuitBreakerTriggered(msg.sender, reason);
+        // Additional logic could be added here, like notifying governance
+        emit CircuitBreakerTriggered(reason, block.timestamp);
     }
-    
+
+    /// @dev Circuit breaker event
+    event CircuitBreakerTriggered(string reason, uint256 timestamp);
+
     /**
      * @dev Manually trigger circuit breaker (owner only)
      * @param reason Reason for triggering
@@ -228,7 +268,7 @@ contract MiniSafeAave102 is ReentrancyGuard, Pausable, Ownable, IMiniSafeCommon 
     function triggerCircuitBreaker(string memory reason) external onlyOwner {
         _triggerCircuitBreaker(reason);
     }
-    
+
     /**
      * @dev Resume contract operations after circuit breaker (owner only)
      */
@@ -237,38 +277,43 @@ contract MiniSafeAave102 is ReentrancyGuard, Pausable, Ownable, IMiniSafeCommon 
     }
 
     /**
-     * @dev Checks if withdrawal window is currently active
-     * @return Boolean indicating if withdrawals are currently allowed
+     * @dev Manually pause the contract (only owner)
+     */
+    function pause() external onlyOwner whenNotPaused {
+        _pause();
+    }
+
+    /**
+     * @dev Manually unpause the contract (only owner)
+     */
+    function unpause() external onlyOwner {
+        _unpause();
+    }
+
+    /**
+     * @dev Check if withdrawals are allowed (last week of month)
+     * @notice Uses block.timestamp for determining withdrawal windows - this is safe and intended
+     * @notice The thrift system requires time-based withdrawal restrictions for the savings model
+     * @return true if withdrawals are allowed
      */
     function canWithdraw() public view returns (bool) {
-        // Using block.timestamp to determine the day of the month for withdrawal windows is standard.
-        // Minor miner manipulation is not a security risk for this use case.
-        uint256 timestamp = block.timestamp;
-        
-        // Convert timestamp to date
-        (,, uint256 day) = _timestampToDate(timestamp);
-        
-        // Allow withdrawals on days 28, 29, and 30 of each month
+        (, , uint256 day) = _timestampToDate(block.timestamp);
+        // Allow withdrawals from 28th to 30th of each month
+        // Using block.timestamp is appropriate here for monthly withdrawal window logic
         return (day >= 28 && day <= 30);
     }
-    
+
     /**
-     * @dev Converts a timestamp to year/month/day
-     * @param timestamp The timestamp to convert
-     * @return year The year
-     * @return month The month (1-12)
-     * @return day The day of month (1-31)
+     * @dev Convert timestamp to date using the standard civil calendar algorithm
+     * @notice This algorithm has deliberate "divide before multiply" operations for date arithmetic
+     * @notice Slither flags this as precision loss, but it's mathematically correct for date conversion
+     * @param timestamp Unix timestamp
+     * @return year Year
+     * @return month Month (1-12)
+     * @return day Day (1-31)
      */
     function _timestampToDate(uint256 timestamp) internal pure returns (uint256 year, uint256 month, uint256 day) {
-        // This function uses block.timestamp-derived values for date conversion.
-        // This is safe for non-critical, coarse time windows like monthly withdrawal periods.
-        // Note: This algorithm intentionally uses divide-before-multiply for astronomical date calculations.
-        // The precision loss is acceptable for monthly withdrawal period determinations.
-        // Calculate days since 1970-01-01
-        uint256 daysSinceEpoch = timestamp / 86400;
-        
-        // Algorithm to convert days to year/month/day
-        uint256 z = daysSinceEpoch + 719468;
+        uint256 z = timestamp / 86400 + 719468;
         // slither-disable-next-line divide-before-multiply
         uint256 era = z / 146097;
         // slither-disable-next-line divide-before-multiply
@@ -276,7 +321,7 @@ contract MiniSafeAave102 is ReentrancyGuard, Pausable, Ownable, IMiniSafeCommon 
         // slither-disable-next-line divide-before-multiply
         uint256 yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
         // slither-disable-next-line divide-before-multiply
-        uint256 y = yoe + era * 400;
+        year = yoe + era * 400;
         // slither-disable-next-line divide-before-multiply
         uint256 doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
         // slither-disable-next-line divide-before-multiply
@@ -284,13 +329,13 @@ contract MiniSafeAave102 is ReentrancyGuard, Pausable, Ownable, IMiniSafeCommon 
         // slither-disable-next-line divide-before-multiply
         day = doy - (153 * mp + 2) / 5 + 1;
         month = mp < 10 ? mp + 3 : mp - 9;
-        year = y + (month <= 2 ? 1 : 0);
-        
-        return (year, month, day);
+        if (month <= 2) {
+            year++;
+        }
     }
 
     /**
-     * @dev Allows users to withdraw funds outside the normal window by burning incentive tokens
+     * @dev Break timelock and withdraw immediately with penalty
      * @param tokenAddress Address of token to withdraw
      */
     function breakTimelock(address tokenAddress) external nonReentrant whenNotPaused {
@@ -331,41 +376,39 @@ contract MiniSafeAave102 is ReentrancyGuard, Pausable, Ownable, IMiniSafeCommon 
      * @dev Cancel emergency withdrawal process
      */
     function cancelEmergencyWithdrawal() external onlyOwner {
-        // Using block.timestamp to check emergency withdrawal state is standard for timelocks.
         require(emergencyWithdrawalAvailableAt != 0, "No emergency withdrawal initiated");
         emergencyWithdrawalAvailableAt = 0;
         emit EmergencyWithdrawalCancelled(msg.sender);
     }
-    
+
     /**
-     * @dev Execute emergency withdrawal of all funds from Aave
+     * @dev Execute emergency withdrawal (only after timelock expires)
      * @param tokenAddress Address of token to withdraw
      */
-    function executeEmergencyWithdrawal(address tokenAddress) 
-        external 
-        onlyOwner 
-    {
-        // Using block.timestamp to enforce emergency withdrawal timelock is standard.
+    function executeEmergencyWithdrawal(address tokenAddress) external onlyOwner {
+        require(tokenStorage.isValidToken(tokenAddress), "Unsupported token");
         require(emergencyWithdrawalAvailableAt != 0, "Emergency withdrawal not initiated");
         require(block.timestamp >= emergencyWithdrawalAvailableAt, "Emergency timelock not expired");
-        require(tokenStorage.isValidToken(tokenAddress), "Unsupported token");
-        // Get aToken balance
-        uint256 aTokenBalance = aaveIntegration.getATokenBalance(tokenAddress);
-        if (aTokenBalance > 0) {
-            // Reset emergency timelock BEFORE external call
-            emergencyWithdrawalAvailableAt = 0;
-            // Withdraw from Aave
-            uint256 amountWithdrawn = aaveIntegration.withdrawFromAave(
-                tokenAddress, 
-                aTokenBalance,
-                address(this)
-            );
-            emit EmergencyWithdrawalExecuted(msg.sender, tokenAddress, amountWithdrawn);
-        } else {
-            revert("No funds to withdraw");
-        }
+
+        // CEI Pattern: Reset emergency state BEFORE external calls to prevent reentrancy
+        emergencyWithdrawalAvailableAt = 0;
+
+        // Get all aTokens for this token
+        address aTokenAddress = tokenStorage.getTokenATokenAddress(tokenAddress);
+        uint256 aTokenBalance = IERC20(aTokenAddress).balanceOf(address(aaveIntegration));
+        
+        // CEI Pattern: Emit event before external call to prevent reentrancy
+        // Note: We emit with the aToken balance, actual withdrawn amount may differ
+        emit EmergencyWithdrawalExecuted(msg.sender, tokenAddress, aTokenBalance);
+        
+        // Withdraw everything from Aave
+        uint256 amountWithdrawn = aaveIntegration.withdrawFromAave(
+            tokenAddress, 
+            aTokenBalance, 
+            address(this)
+        );
     }
-    
+
     /**
      * @dev Update circuit breaker thresholds (owner only)
      * @param newWithdrawalThreshold New threshold for withdrawal amount
@@ -401,28 +444,79 @@ contract MiniSafeAave102 is ReentrancyGuard, Pausable, Ownable, IMiniSafeCommon 
     
     /**
      * @dev Get list of all supported tokens through token storage
+     * @return Array of supported token addresses
+     */
+    function getSupportedTokens() external view returns (address[] memory) {
+        return tokenStorage.getSupportedTokens();
+    }
+
+    /**
+     * @dev Get list of all supported tokens with pagination
      * @param startIndex Starting index for pagination
      * @param count Maximum number of tokens to return
+     * @return Array of supported token addresses
      */
-    function getSupportedTokens(uint256 startIndex, uint256 count) external view returns (address[] memory) {
+    function getSupportedTokensWithPagination(uint256 startIndex, uint256 count) external view returns (address[] memory) {
         return tokenStorage.getSupportedTokens(startIndex, count);
     }
-    
-    function transferOwnership(address newOwner) public virtual override onlyOwner {
-        super.transferOwnership(newOwner);
-        tokenStorage.transferOwnership(newOwner);
-        aaveIntegration.transferOwnership(newOwner);
-    }
 
-    function transferTokenStorageOwnership(address newOwner) external onlyOwner {
-        tokenStorage.transferOwnership(newOwner);
-    }
-
-    function transferAaveIntegrationOwnership(address newOwner) external onlyOwner {
-        aaveIntegration.transferOwnership(newOwner);
+    /**
+     * @dev Get user's token balance
+     * @param user User address
+     * @param tokenAddress Token address
+     * @return User's balance
+     */
+    function getUserBalance(address user, address tokenAddress) external view returns (uint256) {
+        return tokenStorage.getUserTokenShare(user, tokenAddress);
     }
 
     event CircuitBreakerThresholdsUpdated(uint256 withdrawalAmountThreshold, uint256 timeBetweenWithdrawalsThreshold);
+
+    /**
+     * @dev Get total shares for a token
+     * @param tokenAddress Address of the token
+     * @return totalShares Total shares for the token
+     */
+    function getTotalShares(address tokenAddress) external view returns (uint256) {
+        return tokenStorage.getTotalShares(tokenAddress);
+    }
+
+    /**
+     * @dev Get user's deposit time for a token
+     * @param user Address of the user
+     * @param tokenAddress Address of the token
+     * @return timestamp Deposit timestamp
+     */
+    function getUserDepositTime(address user, address tokenAddress) external view returns (uint256) {
+        return tokenStorage.getUserDepositTime(user, tokenAddress);
+    }
+
+    /**
+     * @dev Get user's legacy deposit time (across all tokens)
+     * @param user Address of the user
+     * @return timestamp Deposit timestamp
+     */
+    function getUserDepositTime_Legacy(address user) external view returns (uint256) {
+        return tokenStorage.getUserDepositTime(user);
+    }
+
+    /**
+     * @dev Get user's incentive balance
+     * @param user Address of the user
+     * @return incentive User's incentive balance
+     */
+    function getUserIncentive(address user) external view returns (uint256) {
+        return tokenStorage.getUserIncentive(user);
+    }
+
+    /**
+     * @dev Check if a token is supported
+     * @param tokenAddress Address of the token
+     * @return bool Whether token is supported
+     */
+    function isValidToken(address tokenAddress) external view returns (bool) {
+        return tokenStorage.isValidToken(tokenAddress);
+    }
 
     // ====================== THRIFT FUNCTIONALITY ======================
 
@@ -565,16 +659,83 @@ contract MiniSafeAave102 is ReentrancyGuard, Pausable, Ownable, IMiniSafeCommon 
     }
 
     /**
+     * @dev Set a custom payout order for a thrift group (admin only).
+     *      Can only be called before the group becomes active (i.e., before it is full).
+     * @param groupId ID of the group
+     * @param payoutOrder Array containing the addresses in the desired payout sequence
+     */
+    function setPayoutOrder(uint256 groupId, address[] calldata payoutOrder)
+        external
+        onlyGroupAdmin(groupId)
+    {
+        require(groupId < thriftGroups.length, "Group does not exist");
+        ThriftGroup storage group = thriftGroups[groupId];
+
+        // Ensure the group is not yet active so order cannot be changed mid-cycle
+        require(!group.isActive, "Group already active");
+
+        // Payout order must match member count
+        require(payoutOrder.length == group.members.length, "Invalid payout order length");
+
+        // Validate that each address is a unique group member
+        for (uint256 i = 0; i < payoutOrder.length; i++) {
+            address memberAddr = payoutOrder[i];
+            require(isGroupMember(groupId, memberAddr), "Address not a group member");
+            for (uint256 j = i + 1; j < payoutOrder.length; j++) {
+                require(memberAddr != payoutOrder[j], "Duplicate address in payout order");
+            }
+        }
+
+        // Reset any existing order
+        delete group.payoutOrder;
+
+        // Set the new payout order
+        for (uint256 i = 0; i < payoutOrder.length; i++) {
+            group.payoutOrder.push(payoutOrder[i]);
+        }
+
+        emit PayoutOrderSet(groupId, payoutOrder);
+    }
+
+    /**
+     * @dev Manually activate a thrift group before it reaches max members.
+     *      Requires payout order to be set and start date not yet passed.
+     * @param groupId ID of the group to activate
+     */
+    function activateThriftGroup(uint256 groupId) external onlyGroupAdmin(groupId) {
+        require(groupId < thriftGroups.length, "Group does not exist");
+        ThriftGroup storage group = thriftGroups[groupId];
+
+        require(!group.isActive, "Group already active");
+
+        // Ensure payout order is set and valid length
+        require(group.payoutOrder.length == group.members.length && group.members.length > 0,
+            "Payout order not set");
+
+        // Allow activation any time before startDate passes
+        require(block.timestamp < group.startDate, "Group has already started");
+
+        group.isActive = true;
+
+        emit GroupActivated(groupId);
+    }
+
+    /**
      * @dev Make a contribution to a thrift group
      * @param groupId ID of the group
      * @param tokenAddress Address of the token to contribute
      * @param amount Amount to contribute
      */
+    // ================= CONTRIBUTIONS =================
+
+    /**
+     * @notice Standard contribution with explicit token and amount (kept for flexibility)
+     */
     function makeContribution(
-        uint256 groupId, 
-        address tokenAddress, 
+        uint256 groupId,
+        address tokenAddress,
         uint256 amount
-    ) external onlyGroupMember(groupId) onlyActiveGroup(groupId) nonReentrant {
+    ) public onlyGroupMember(groupId) onlyActiveGroup(groupId) nonReentrant {
         ThriftGroup storage group = thriftGroups[groupId];
         
         require(tokenStorage.isValidToken(tokenAddress), "Unsupported token");
@@ -594,6 +755,74 @@ contract MiniSafeAave102 is ReentrancyGuard, Pausable, Ownable, IMiniSafeCommon 
 
         // Check if all members have contributed and process payout if ready
         _checkAndProcessPayout(groupId, tokenAddress);
+    }
+
+    /**
+     * @notice Convenience contribution – uses the group's configured token and contribution amount.
+     * The caller must have approved `contributionAmount` of `tokenAddress` to this contract beforehand.
+     * Mirrors the signature expected by existing test suites.
+     */
+    function makeContribution(uint256 groupId) external {
+        require(groupId < thriftGroups.length, "Group does not exist");
+        ThriftGroup storage group = thriftGroups[groupId];
+        // Forward to primary contribution logic
+        makeContribution(groupId, group.tokenAddress, group.contributionAmount);
+    }
+
+    // =============== MANUAL PAYOUT DISTRIBUTION ===============
+
+    /**
+     * @dev Manually distribute payout once all members have contributed.
+     * Can be invoked by the group admin to trigger payout ahead of automatic detection.
+     * Reverts if not all members have paid for the cycle.
+     */
+    function distributePayout(uint256 groupId)
+        external
+        onlyGroupAdmin(groupId)
+        onlyActiveGroup(groupId)
+        nonReentrant
+    {
+        require(groupId < thriftGroups.length, "Group does not exist");
+        ThriftGroup storage group = thriftGroups[groupId];
+
+        // Ensure every member has contributed this cycle
+        for (uint256 i = 0; i < group.members.length; i++) {
+            require(group.hasPaidThisCycle[group.members[i]], "All members must contribute first");
+        }
+
+        _processPayout(groupId, group.tokenAddress);
+    }
+
+    // =============== EMERGENCY WITHDRAWAL ===============
+    /// @notice Emitted when a group admin performs an emergency withdrawal of their contributions
+    event EmergencyWithdraw(uint256 indexed groupId, address indexed admin, uint256 amount);
+
+    /**
+     * @dev Allow group admin to emergency-withdraw their contributed funds before payout processing.
+     *      This is primarily a safety valve and is surfaced for the test-suite.
+     *      It refunds only the admin's current cycle contribution (if any) and de-activates the group.
+     */
+    function emergencyWithdraw(uint256 groupId)
+        external
+        onlyGroupAdmin(groupId)
+        nonReentrant
+    {
+        require(groupId < thriftGroups.length, "Group does not exist");
+        ThriftGroup storage group = thriftGroups[groupId];
+
+        uint256 amount = group.contributions[msg.sender];
+        require(amount > 0, "No contribution to withdraw");
+
+        // State changes first
+        group.contributions[msg.sender] = 0;
+        group.hasPaidThisCycle[msg.sender] = false;
+        group.totalContributed[msg.sender] -= amount;
+        group.isActive = false; // deactivate group on emergency withdrawal
+
+        // Transfer contribution back to admin
+        IERC20(group.tokenAddress).safeTransfer(msg.sender, amount);
+
+        emit EmergencyWithdraw(groupId, msg.sender, amount);
     }
 
     /**
@@ -950,5 +1179,4 @@ contract MiniSafeAave102 is ReentrancyGuard, Pausable, Ownable, IMiniSafeCommon 
         }
         return totalContributed;
     }
-
-}
+} 

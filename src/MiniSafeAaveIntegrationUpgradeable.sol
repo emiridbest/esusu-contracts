@@ -9,13 +9,14 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@aave/contracts/interfaces/IPoolAddressesProvider.sol";
 import "@aave/contracts/interfaces/IPool.sol";
 import "@aave/contracts/interfaces/IPoolDataProvider.sol";
+import "./IMiniSafeCommon.sol";
 import "./MiniSafeTokenStorageUpgradeable.sol";
 
 /**
  * @title MiniSafeAaveIntegrationUpgradeable
  * @dev Upgradeable Aave V3 integration for MiniSafe protocol
  */
-contract MiniSafeAaveIntegrationUpgradeable is Initializable, OwnableUpgradeable, UUPSUpgradeable {
+contract MiniSafeAaveIntegrationUpgradeable is Initializable, OwnableUpgradeable, UUPSUpgradeable, IMiniSafeCommon {
     using SafeERC20 for IERC20;
 
     /// @dev Token storage contract
@@ -31,13 +32,20 @@ contract MiniSafeAaveIntegrationUpgradeable is Initializable, OwnableUpgradeable
     IPool public aavePool;
 
     /// @dev Events
-    event DepositedToAave(address indexed tokenAddress, uint256 amount);
-    event WithdrawnFromAave(address indexed tokenAddress, uint256 amount);
     event TokenSupportAdded(address indexed tokenAddress, address indexed aTokenAddress);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
+    }
+
+    /**
+     * @dev Modifier to restrict access to authorized managers
+     */
+    modifier onlyAuthorizedManager() {
+        require(owner() == _msgSender() || tokenStorage.authorizedManagers(_msgSender()), 
+                "Caller is not authorized");
+        _;
     }
 
     /**
@@ -109,27 +117,62 @@ contract MiniSafeAaveIntegrationUpgradeable is Initializable, OwnableUpgradeable
     }
 
     /**
+     * @dev Updates the Aave Pool contract address (if it changes in future)
+     * @param newPoolAddress New Data Provider contract address
+     */
+    function updatePoolDataProvider(address newPoolAddress) external onlyOwner {
+        require(newPoolAddress != address(0), "Invalid pool address");
+        dataProvider = IPoolDataProvider(newPoolAddress);
+        // Re-initialize base tokens with the new pool
+        // (Call initializeBaseTokens() externally after ownership transfer if needed)
+
+        emit AavePoolUpdated(newPoolAddress);
+    }
+
+    /**
+     * @dev Updates the Aave Pool contract address (if it changes in future)
+     * @param newPoolAddress New Aave Pool contract address
+     */
+    function updateAavePool(address newPoolAddress) external onlyOwner {
+        require(newPoolAddress != address(0), "Invalid pool address");
+        aavePool = IPool(newPoolAddress);
+
+        emit AavePoolUpdated(newPoolAddress);
+    }
+
+    /**
+     * @dev Set manager authorization
+     * @param manager Address of the manager
+     * @param authorized Whether the manager is authorized
+     */
+    function setManagerAuthorization(address manager, bool authorized) external onlyOwner {
+        require(manager != address(0), "Cannot authorize zero address");
+        tokenStorage.setManagerAuthorization(manager, authorized);
+    }
+
+    /**
      * @dev Add support for a new token
      * @param tokenAddress Address of the token to add
      * @return success Whether the operation was successful
      */
     function addSupportedToken(
         address tokenAddress
-    ) external onlyOwner returns (bool success) {
+    ) external onlyAuthorizedManager returns (bool success) {
         require(tokenAddress != address(0), "Cannot add zero address as token");
         // Try to verify the token is listed on Aave by getting its reserve data
-        // slither-disable-next-line unused-return
         try dataProvider.getReserveTokensAddresses(tokenAddress) returns (
             address aTokenAddress, 
             address, /* stableDebtToken - explicitly unused */ 
             address  /* variableDebtToken - explicitly unused */
         ) {
-            // We only need aTokenAddress for our use case, other return values are explicitly unused
             require(aTokenAddress != address(0), "Token not supported by Aave");
+            // CEI Pattern: Emit event before external call to prevent reentrancy
+            emit TokenSupportAdded(tokenAddress, aTokenAddress);
             bool added = tokenStorage.addSupportedToken(tokenAddress, aTokenAddress);
             require(added, "Failed to add supported token");
-            emit TokenSupportAdded(tokenAddress, aTokenAddress);
             return true;
+        } catch Error(string memory reason) {
+            revert(reason);
         } catch {
             revert("Error checking token support in Aave");
         }
@@ -144,7 +187,7 @@ contract MiniSafeAaveIntegrationUpgradeable is Initializable, OwnableUpgradeable
     function depositToAave(
         address tokenAddress, 
         uint256 amount
-    ) external returns (uint256 sharesReceived) {
+    ) external onlyAuthorizedManager returns (uint256 sharesReceived) {
         require(tokenStorage.isValidToken(tokenAddress), "Token not supported");
         require(amount > 0, "Amount must be greater than 0");
 
@@ -155,9 +198,11 @@ contract MiniSafeAaveIntegrationUpgradeable is Initializable, OwnableUpgradeable
         // Get aToken balance before deposit
         uint256 aTokenBalanceBefore = IERC20(aTokenAddress).balanceOf(address(this));
 
-        // Approve Aave pool to spend tokens
-        bool success = IERC20(tokenAddress).approve(address(aavePool), amount);
-        require(success, "Token approval failed");
+        // Use SafeERC20.forceApprove for better security
+        SafeERC20.forceApprove(IERC20(tokenAddress), address(aavePool), amount);
+
+        // CEI Pattern: Emit event before external call to prevent reentrancy
+        emit DepositedToAave(tokenAddress, amount);
 
         // Deposit tokens to Aave
         try aavePool.supply(
@@ -167,6 +212,8 @@ contract MiniSafeAaveIntegrationUpgradeable is Initializable, OwnableUpgradeable
             0 // referralCode, typically 0
         ) {
             // Success
+        } catch Error(string memory reason) {
+            revert(reason);
         } catch {
             revert("Aave deposit failed");
         }
@@ -176,8 +223,6 @@ contract MiniSafeAaveIntegrationUpgradeable is Initializable, OwnableUpgradeable
 
         // Calculate shares based on actual aTokens received
         sharesReceived = aTokenBalanceAfter - aTokenBalanceBefore;
-
-        emit DepositedToAave(tokenAddress, amount);
 
         return sharesReceived;
     }
@@ -193,22 +238,30 @@ contract MiniSafeAaveIntegrationUpgradeable is Initializable, OwnableUpgradeable
         address tokenAddress,
         uint256 amount,
         address recipient
-    ) external returns (uint256 amountWithdrawn) {
+    ) external onlyAuthorizedManager returns (uint256 amountWithdrawn) {
         require(tokenStorage.isValidToken(tokenAddress), "Token not supported");
         require(amount > 0, "Amount must be greater than 0");
         require(recipient != address(0), "Invalid recipient");
 
+        address aTokenAddress = tokenStorage.getTokenATokenAddress(tokenAddress);
+        require(aTokenAddress != address(0), "aToken address not found");
+
+        // CEI Pattern: Emit event before external calls to prevent reentrancy
+        // Note: We emit with the requested amount, actual withdrawn amount may differ
+        emit WithdrawnFromAave(tokenAddress, amount);
+
         // Withdraw from Aave
-        amountWithdrawn = aavePool.withdraw(
-            tokenAddress,
-            amount,
-            address(this)
-        );
-        
+        try aavePool.withdraw(tokenAddress, amount, address(this)) returns (uint256 withdrawn) {
+            amountWithdrawn = withdrawn;
+        } catch Error(string memory reason) {
+            revert(reason);
+        } catch {
+            revert("Aave withdraw failed");
+        }
+        require(amountWithdrawn > 0, "aToken address not found");
+
         // Transfer withdrawn tokens to recipient
         IERC20(tokenAddress).safeTransfer(recipient, amountWithdrawn);
-
-        emit WithdrawnFromAave(tokenAddress, amountWithdrawn);
 
         return amountWithdrawn;
     }
@@ -221,6 +274,7 @@ contract MiniSafeAaveIntegrationUpgradeable is Initializable, OwnableUpgradeable
     function getATokenBalance(address tokenAddress) external view returns (uint256 balance) {
         require(tokenStorage.isValidToken(tokenAddress), "Token not supported");
         address aTokenAddress = tokenStorage.getTokenATokenAddress(tokenAddress);
+        require(aTokenAddress != address(0), "aToken address not found");
         return IERC20(aTokenAddress).balanceOf(address(this));
     }
 
@@ -232,17 +286,28 @@ contract MiniSafeAaveIntegrationUpgradeable is Initializable, OwnableUpgradeable
     function emergencyWithdraw(address tokenAddress, address recipient) external onlyOwner {
         require(recipient != address(0), "Invalid recipient");
         
-        if (tokenStorage.isValidToken(tokenAddress)) {
-            // Withdraw from Aave first
-            address aTokenAddress = tokenStorage.getTokenATokenAddress(tokenAddress);
-            uint256 aTokenBalance = IERC20(aTokenAddress).balanceOf(address(this));
-            
-            if (aTokenBalance > 0) {
-                uint256 withdrawn = aavePool.withdraw(tokenAddress, aTokenBalance, recipient);
-                require(withdrawn > 0, "Emergency withdrawal failed");
+        // Check if token is supported first
+        if (!tokenStorage.isValidToken(tokenAddress)) {
+            // For unsupported tokens, just transfer any balance directly
+            uint256 directTokenBalance = IERC20(tokenAddress).balanceOf(address(this));
+            if (directTokenBalance > 0) {
+                IERC20(tokenAddress).safeTransfer(recipient, directTokenBalance);
             }
+            return;
         }
         
+        address aTokenAddress = tokenStorage.getTokenATokenAddress(tokenAddress);
+        require(aTokenAddress != address(0), "aToken address not found");
+        uint256 aTokenBalance = IERC20(aTokenAddress).balanceOf(address(this));
+        if (aTokenBalance > 0) {
+            try aavePool.withdraw(tokenAddress, aTokenBalance, recipient) returns (uint256 withdrawn) {
+                require(withdrawn > 0, "Emergency withdrawal failed");
+            } catch Error(string memory reason) {
+                revert(reason);
+            } catch {
+                revert("Emergency withdrawal failed");
+            }
+        }
         // Transfer any remaining tokens
         uint256 tokenBalance = IERC20(tokenAddress).balanceOf(address(this));
         if (tokenBalance > 0) {

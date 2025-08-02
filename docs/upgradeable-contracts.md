@@ -223,7 +223,7 @@ forge script script/DeployUpgradeable.s.sol:DeployUpgradeable \
 forge create src/MiniSafeAaveUpgradeable.sol:MiniSafeAaveUpgradeable \
     --rpc-url $RPC_URL \
     --private-key $PRIVATE_KEY
-
+forge create MiniSafeAave --constructor-args 0x9F7Cf9417D5251C59fE94fB9147feEe1aAd9Cea5 --rpc-url http://localhost:8545 --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
 # 2. Propose upgrade via timelock (requires proposer role)
 # 3. Wait for timelock delay
 # 4. Execute upgrade (requires executor role)
