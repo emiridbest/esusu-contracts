@@ -1827,10 +1827,7 @@ contract MiniSafeThriftCompleteTest is Test {
         assertEq(depositTime, 0); // Initially 0
     }
     
-    function testGetUserIncentive() public {
-        uint256 incentive = thrift.getUserIncentive(user1);
-        assertEq(incentive, 0); // Initially 0
-    }
+    
     
     function testIsValidToken() public {
         bool isValid = thrift.isValidToken(address(mockToken));
@@ -1932,35 +1929,10 @@ contract MiniSafeThriftCompleteTest is Test {
         assertEq(totalShares, 0); // Initially 0
     }
     
-    function testGetUserIncentive_Storage() public {
-        uint256 incentive = tokenStorage.getUserIncentive(user1);
-        assertEq(incentive, 0); // Initially 0
-    }
     
-    function testIncrementUserIncentive() public {
-        vm.prank(owner);
-        tokenStorage.incrementUserIncentive(user1, 100);
-        
-        uint256 incentive = tokenStorage.getUserIncentive(user1);
-        assertEq(incentive, 100);
-    }
     
-    function testDecrementUserIncentive() public {
-        vm.prank(owner);
-        tokenStorage.incrementUserIncentive(user1, 100);
-        
-        vm.prank(owner);
-        tokenStorage.decrementUserIncentive(user1, 50);
-        
-        uint256 incentive = tokenStorage.getUserIncentive(user1);
-        assertEq(incentive, 50);
-    }
+   
     
-    function testDecrementUserIncentive_Underflow() public {
-        vm.prank(owner);
-        vm.expectRevert("Incentive underflow");
-        tokenStorage.decrementUserIncentive(user1, 100);
-    }
     
     function testPause_Storage() public {
         vm.prank(owner);

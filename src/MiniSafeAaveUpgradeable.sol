@@ -500,14 +500,7 @@ contract MiniSafeAaveUpgradeable is
         return tokenStorage.getUserDepositTime(user);
     }
 
-    /**
-     * @dev Get user's incentive balance
-     * @param user Address of the user
-     * @return incentive User's incentive balance
-     */
-    function getUserIncentive(address user) external view returns (uint256) {
-        return tokenStorage.getUserIncentive(user);
-    }
+
 
     /**
      * @dev Check if a token is supported

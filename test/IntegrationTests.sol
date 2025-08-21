@@ -585,25 +585,7 @@ contract IntegrationTests is Test {
         assertEq(totalShares, amount / 2);
     }
 
-    function testTokenStorage_IncentiveFlow() public {
-        address user = user1;
-        uint256 incentiveAmount = 50 ether;
-        
-        // Increment incentive
-        tokenStorage.incrementUserIncentive(user, incentiveAmount);
-        
-        // Check incentive
-        uint256 incentive = tokenStorage.getUserIncentive(user);
-        assertEq(incentive, incentiveAmount);
-        
-        // Decrement incentive
-        tokenStorage.decrementUserIncentive(user, incentiveAmount / 2);
-        
-        // Check updated incentive
-        incentive = tokenStorage.getUserIncentive(user);
-        assertEq(incentive, incentiveAmount / 2);
-    }
-
+    
     function testTokenStorage_RemoveTokenFlow() public {
         address newToken = address(0x3000);
         address newAToken = address(0x4000);
@@ -1192,33 +1174,15 @@ contract IntegrationTests is Test {
         tokenStorage.updateUserTokenShare(user1, address(mockToken), 100 ether, false);
     }
 
-    function testTokenStorage_IncrementUserIncentive_ZeroUser() public {
-        // Zero user validation may not exist, test actual functionality
-        tokenStorage.incrementUserIncentive(address(0), 100 ether);
-        // Verify incentive was set
-        assertEq(tokenStorage.getUserIncentive(address(0)), 100 ether);
-    }
+  
 
-    function testTokenStorage_IncrementUserIncentive_ZeroAmount() public {
-        // Zero amount validation may not exist, test actual functionality
-        uint256 initialIncentive = tokenStorage.getUserIncentive(user1);
-        tokenStorage.incrementUserIncentive(user1, 0);
-        // Verify no change
-        assertEq(tokenStorage.getUserIncentive(user1), initialIncentive);
-    }
+    
+    
 
-    function testTokenStorage_DecrementUserIncentive_ZeroUser() public {
-        vm.expectRevert("Incentive underflow");
-        tokenStorage.decrementUserIncentive(address(0), 100 ether);
-    }
+    
 
-    function testTokenStorage_DecrementUserIncentive_ZeroAmount() public {
-        // Zero amount validation may not exist, test actual functionality
-        uint256 initialIncentive = tokenStorage.getUserIncentive(user1);
-        tokenStorage.decrementUserIncentive(user1, 0);
-        // Verify no change
-        assertEq(tokenStorage.getUserIncentive(user1), initialIncentive);
-    }
+    
+
 
     function testTokenStorage_SetManagerAuthorization_ZeroAddress() public {
         vm.expectRevert("Cannot authorize zero address");
@@ -1396,17 +1360,6 @@ contract IntegrationTests is Test {
         // This tests the function execution path for coverage
     }
 
-    function testTokenStorage_IncrementUserIncentiveZeroAmount() public {
-        // Test incrementing zero incentive
-        vm.prank(owner);
-        tokenStorage.setManagerAuthorization(address(this), true);
-        
-        uint256 incentiveBefore = tokenStorage.getUserIncentive(user1);
-        tokenStorage.incrementUserIncentive(user1, 0);
-        
-        // Should remain unchanged
-        assertEq(tokenStorage.getUserIncentive(user1), incentiveBefore);
-    }
 
     function testTokenStorage_UpdateUserTokenShareZeroShares() public {
         // Test zero shares update with unique token to avoid "already supported" error
