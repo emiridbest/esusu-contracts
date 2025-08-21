@@ -18,7 +18,6 @@ contract MiniSafeTokenStorageUpgradeable is Initializable, OwnableUpgradeable, P
     struct InternalUserBalance {
         mapping(address => uint256) tokenShares;
         mapping(address => uint256) depositTime;
-        uint256 tokenIncentive;
     }
 
     /// @dev Struct for token information
@@ -29,7 +28,7 @@ contract MiniSafeTokenStorageUpgradeable is Initializable, OwnableUpgradeable, P
     }
 
     /// @dev Mapping from user address to their balance info
-    mapping(address => InternalUserBalance) public userBalances;
+    mapping(address => InternalUserBalance) internal userBalances;
 
     /// @dev Mapping from token address to token info
     mapping(address => TokenInfo) public tokenInfo;
@@ -304,34 +303,11 @@ contract MiniSafeTokenStorageUpgradeable is Initializable, OwnableUpgradeable, P
         return tokenInfo[tokenAddress].totalShares;
     }
 
-    /**
-     * @dev Get user's incentive balance
-     * @param user Address of the user
-     * @return incentive User's incentive balance
-     */
-    function getUserIncentive(address user) external view returns (uint256 incentive) {
-        return userBalances[user].tokenIncentive;
-    }
+    
 
-    /**
-     * @dev Increment user's incentive
-     * @param user Address of the user
-     * @param amount Amount to increment
-     */
-    function incrementUserIncentive(address user, uint256 amount) external onlyAuthorizedManager {
-        userBalances[user].tokenIncentive += amount;
-    }
+    
 
-    /**
-     * @dev Decrement user's incentive
-     * @param user Address of the user
-     * @param amount Amount to decrement
-     */
-    function decrementUserIncentive(address user, uint256 amount) external onlyAuthorizedManager {
-        require(userBalances[user].tokenIncentive >= amount, "Incentive underflow");
-        userBalances[user].tokenIncentive -= amount;
-    }
-
+    
     /**
      * @dev Pause the contract (only owner)
      */

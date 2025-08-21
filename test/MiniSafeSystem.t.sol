@@ -419,19 +419,7 @@ contract MiniSafeTokenStorageUpgradeableTest is Test {
         tokenStorage.updateUserTokenShare(user1, token1, 100, true);
     }
 
-    function testIncrementDecrementIncentive() public {
-        vm.prank(manager);
-        tokenStorage.incrementUserIncentive(user1, 100);
-        assertEq(tokenStorage.getUserIncentive(user1), 100);
-
-        vm.prank(manager);
-        tokenStorage.decrementUserIncentive(user1, 50);
-        assertEq(tokenStorage.getUserIncentive(user1), 50);
-
-        vm.prank(manager);
-        vm.expectRevert("Incentive underflow");
-        tokenStorage.decrementUserIncentive(user1, 100);
-    }
+   
 
     function testUpgrade() public {
         MiniSafeTokenStorageUpgradeable newImpl = new MiniSafeTokenStorageUpgradeable();
