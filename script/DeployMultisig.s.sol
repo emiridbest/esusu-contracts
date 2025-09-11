@@ -6,77 +6,18 @@ import "../src/MiniSafeFactoryUpgradeable.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 /**
- * @title DeployUpgradeable
- * @dev Deployment script for upgradeable MiniSafe system on Celo
- * @dev Maintains consistent addresses across upgrades for client integration
+ * @title DeployMultisig
+ * @dev Deployment script for upgradeable MiniSafe system with multisig governance on Celo
  */
-contract DeployUpgradeable is Script {
+contract DeployMultisig is Script {
     
     /// @dev Default Celo addresses
     address constant CELO_AAVE_PROVIDER = 0x9F7Cf9417D5251C59fE94fB9147feEe1aAd9Cea5;
-    address constant CUSD_TOKEN = 0x765DE816845861e75A25fCA122bb6898B8B1282a;
     
     /// @dev Deployment configuration
-    uint256 constant MIN_DELAY = 24 hours;
+    uint256 constant MULTISIG_DELAY = 48 hours;
     
     function run() external {
-        uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
-        address deployer = vm.addr(deployerPrivateKey);
-        
-        console2.log("Deployer:", deployer);
-        console2.log("Deployer balance:", deployer.balance);
-        
-        vm.startBroadcast(deployerPrivateKey);
-        
-        // Deploy factory implementation
-        console2.log("Deploying MiniSafeFactoryUpgradeable implementation...");
-        MiniSafeFactoryUpgradeable factoryImplementation = new MiniSafeFactoryUpgradeable();
-        
-        // Deploy factory proxy with initialization
-        console2.log("Deploying MiniSafeFactoryUpgradeable proxy...");
-        bytes memory initData = abi.encodeWithSelector(
-            MiniSafeFactoryUpgradeable.initialize.selector,
-            deployer
-        );
-        ERC1967Proxy factoryProxy = new ERC1967Proxy(
-            address(factoryImplementation),
-            initData
-        );
-        MiniSafeFactoryUpgradeable factory = MiniSafeFactoryUpgradeable(address(factoryProxy));
-        console2.log("Factory proxy deployed at:", address(factory));
-        
-        // Get implementation addresses for verification
-        (address miniSafeImpl, address tokenStorageImpl, address aaveImpl) = factory.getImplementations();
-        console2.log("MiniSafe Implementation:", miniSafeImpl);
-        console2.log("TokenStorage Implementation:", tokenStorageImpl);
-        console2.log("AaveIntegration Implementation:", aaveImpl);
-        
-        // Deploy the MiniSafe system for single owner
-        console2.log("\nDeploying MiniSafe system for single owner...");
-        MiniSafeFactoryUpgradeable.MiniSafeAddresses memory addresses = factory.deployForSingleOwner(
-            deployer,
-            MIN_DELAY,
-            CELO_AAVE_PROVIDER
-        );
-        
-        console2.log("\n=== DEPLOYED SYSTEM ADDRESSES ===");
-        console2.log("Timelock Controller:", addresses.timelock);
-        console2.log("Token Storage Proxy:", addresses.tokenStorage);
-        console2.log("Aave Integration Proxy:", addresses.aaveIntegration);
-        console2.log("MiniSafe Proxy:", addresses.miniSafe);
-        
-        vm.stopBroadcast();
-        
-        // Note: File writing is disabled when broadcasting to actual networks
-        // Please manually record the deployment addresses shown above
-        console2.log("\nNOTE: Deployment information was displayed above but not saved to file due to network restrictions");
-        console2.log("Please manually record these addresses for your integration");
-    }
-    
-    /**
-     * @dev Deploy with multi-sig configuration
-     */
-    function deployMultiSig() external {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(deployerPrivateKey);
         
@@ -120,7 +61,7 @@ contract DeployUpgradeable is Script {
         console2.log("\nDeploying MiniSafe system with multi-sig...");
         MiniSafeFactoryUpgradeable.MiniSafeAddresses memory addresses = factory.deployWithRecommendedMultiSig(
             signers,
-            48 hours, // 48 hour delay for production
+            MULTISIG_DELAY,
             CELO_AAVE_PROVIDER
         );
         
@@ -153,4 +94,4 @@ contract DeployUpgradeable is Script {
         console2.log("Please manually record these addresses for your integration");
     }
     
-} 
+}
