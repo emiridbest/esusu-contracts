@@ -191,13 +191,13 @@ contract ComprehensiveInvariantTest is Test {
             address(0) // No admin - timelock is self-administered
         );
         
-        // Deploy upgradeable factory and create MiniSafe system
-        MiniSafeFactoryUpgradeable factoryImpl = new MiniSafeFactoryUpgradeable();
-        ERC1967Proxy factoryProxy = new ERC1967Proxy(
-            address(factoryImpl),
-            abi.encodeWithSelector(MiniSafeFactoryUpgradeable.initialize.selector, owner)
+        // Deploy factory (non-upgradeable) and create MiniSafe system
+        factory = new MiniSafeFactoryUpgradeable(
+            owner,
+            address(new MiniSafeAaveUpgradeable()),
+            address(new MiniSafeTokenStorageUpgradeable()),
+            address(new MiniSafeAaveIntegrationUpgradeable())
         );
-        factory = MiniSafeFactoryUpgradeable(address(factoryProxy));
         
         // Create UpgradeableConfig for deployment
         MiniSafeFactoryUpgradeable.UpgradeableConfig memory config = MiniSafeFactoryUpgradeable.UpgradeableConfig({

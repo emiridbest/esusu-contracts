@@ -43,7 +43,8 @@ contract MiniSafeAaveIntegrationUpgradeable is Initializable, OwnableUpgradeable
      * @dev Modifier to restrict access to authorized managers
      */
     modifier onlyAuthorizedManager() {
-        require(owner() == _msgSender() || tokenStorage.authorizedManagers(_msgSender()), 
+        address caller = _msgSender();
+        require(owner() == caller || tokenStorage.authorizedManagers(caller), 
                 "Caller is not authorized");
         _;
     }
@@ -144,10 +145,13 @@ contract MiniSafeAaveIntegrationUpgradeable is Initializable, OwnableUpgradeable
      * @dev Set manager authorization
      * @param manager Address of the manager
      * @param authorized Whether the manager is authorized
+     * @dev NOTE: This function is deprecated. Use TokenStorage.setManagerAuthorization directly.
+     * @dev This function is kept for backward compatibility but will revert.
      */
     function setManagerAuthorization(address manager, bool authorized) external onlyOwner {
         require(manager != address(0), "Cannot authorize zero address");
-        tokenStorage.setManagerAuthorization(manager, authorized);
+        // This function is deprecated - use TokenStorage directly
+        revert("Use TokenStorage.setManagerAuthorization directly");
     }
 
     /**

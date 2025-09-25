@@ -27,10 +27,11 @@ The protocol implements time-locked savings with withdrawal windows (28th-30th o
 
 The protocol consists of several key contracts:
 
-- **SimpleMinisafe**: Core savings functionality with timelock mechanisms
-- **MiniSafeAave**: Extended functionality with Aave integration
-- **MiniSafeTokenStorage**: Token balance management
-- **MinisafeFactory**: Contract factory for deployment
+- **MiniSafeAaveUpgradeable**: Core savings functionality with timelock mechanisms and Aave integration
+- **MiniSafeTokenStorageUpgradeable**: Token balance management and user share tracking
+- **MiniSafeAaveIntegrationUpgradeable**: Aave V3 protocol integration for yield generation
+- **MiniSafeFactoryUpgradeable**: Non-upgradeable factory contract for deploying the system
+- **TimelockController**: Governance contract for managing upgrades and administrative functions
 
 ## Documentation
 
@@ -45,8 +46,10 @@ The protocol consists of several key contracts:
 The Esusu protocol has undergone comprehensive security analysis and testing:
 
 - **Static Analysis**: Analyzed with Slither with all critical and high-severity issues resolved
-- **Test Coverage**: Maintains minimum 95% code coverage using Foundry tests
+- **Test Coverage**: Maintains 95%+ code coverage with 373 passing tests using Foundry
 - **Security Best Practices**: Implements CEI pattern, proper access controls, and emergency mechanisms
+- **Upgradeable Architecture**: Uses UUPS proxy pattern for secure, gas-efficient upgrades
+- **Governance Security**: Timelock-controlled upgrades with multisig requirements
 - **Formal Verification**: Specifications available for critical functions
 - **Audit Ready**: Prepared for third-party security audits
 
@@ -84,25 +87,76 @@ forge build
 forge test
 ```
 
-## Deployments
+5. Run coverage:
+```bash
+forge coverage --report summary
+```
 
-The Esusu protocol has been deployed to the following networks:
+## Deployment
 
-| Network | Contract | Address |
-|---------|----------|---------|
-| Celo | MiniSafeAave | `0x9fAB2C3310a906f9306ACaA76303BcEb46cA5478` |
-| Celo | MiniSafeAaveIntegration | `0xB58c8917eD9e2ba632f6f446cA0509781dd676B2` |
-| Celo | MiniSafeAave | `0x67fDEC406b8d3bABaf4D59627aCde3C5cD4BA90A` |
+The Esusu protocol supports deployment to multiple networks with configurable governance settings:
+
+### Quick Start (Testing)
+```bash
+# Set your private key
+$env:PRIVATE_KEY="your_private_key_here"
+
+# Deploy with 5-minute delay for testing
+forge script script/DeployMultisig.s.sol:DeployMultisig --rpc-url celo --broadcast --verify
+```
+
+### Production Deployment
+```bash
+# Deploy with 48-hour delay for production
+forge script script/DeployUpgradeable.s.sol:DeployUpgradeable --rpc-url celo --broadcast --verify
+```
+
+### Manual Verification (If Automatic Verification Fails)
+
+If automatic verification fails, manually verify each contract:
+
+```bash
+# 1. Verify Factory Contract
+forge verify-contract --chain celo <FACTORY_ADDRESS> src/MiniSafeFactoryUpgradeable.sol:MiniSafeFactoryUpgradeable --compiler-version 0.8.30 --optimizer-runs 800
+
+# 2. Verify MiniSafe Contract  
+forge verify-contract --chain celo <MINISAFE_ADDRESS> src/MiniSafeAaveUpgradeable.sol:MiniSafeAaveUpgradeable --compiler-version 0.8.30 --optimizer-runs 800
+
+# 3. Verify Token Storage Contract
+forge verify-contract --chain celo <TOKEN_STORAGE_ADDRESS> src/MiniSafeTokenStorageUpgradeable.sol:MiniSafeTokenStorageUpgradeable --compiler-version 0.8.30 --optimizer-runs 800
+
+# 4. Verify Aave Integration Contract
+forge verify-contract --chain celo <AAVE_INTEGRATION_ADDRESS> src/MiniSafeAaveIntegrationUpgradeable.sol:MiniSafeAaveIntegrationUpgradeable --compiler-version 0.8.30 --optimizer-runs 800
+
+# 5. Verify Timelock Controller
+forge verify-contract --chain celo <TIMELOCK_ADDRESS> lib/openzeppelin-contracts/contracts/governance/TimelockController.sol:TimelockController --compiler-version 0.8.30 --optimizer-runs 800
+```
+
+**Note**: Replace `<CONTRACT_ADDRESS>` with actual deployed addresses from the `broadcast/` directory.
+
+### Previous Deployments
+
+| Network | Contract | Address | Status |
+|---------|----------|---------|---------|
+| Celo | MiniSafeAave | `0x9fAB2C3310a906f9306ACaA76303BcEb46cA5478` | Legacy |
+| Celo | MiniSafeAaveIntegration | `0xB58c8917eD9e2ba632f6f446cA0509781dd676B2` | Legacy |
+| Celo | MiniSafeAave | `0x67fDEC406b8d3bABaf4D59627aCde3C5cD4BA90A` | Legacy |
+
+> **Note**: Previous deployments used the old factory pattern. New deployments use the improved non-upgradeable factory architecture.
 
 
-## Security
+## Key Features
 
-The Esusu protocol implements several security mechanisms:
+The Esusu protocol implements several key features:
 
-- Reentrancy guards
-- Circuit breaker pattern
-- Access control modifiers
-- Event emission for all state changes
+- **Thrift Groups**: Community-based savings circles with configurable contribution cycles
+- **Multi-Token Support**: Deposit and earn yield on various ERC20 tokens
+- **Aave Integration**: Automatic yield generation through Aave V3 protocol
+- **Time-Locked Withdrawals**: Withdrawal windows (28th-30th of each month) to encourage savings discipline
+- **Emergency Controls**: Circuit breaker and emergency withdrawal capabilities
+- **Upgradeable Architecture**: UUPS proxy pattern for secure, gas-efficient upgrades
+- **Governance**: Timelock-controlled upgrades with multisig requirements
+- **Comprehensive Testing**: 373 tests with 80%+ coverage
 
 ## Audits
 

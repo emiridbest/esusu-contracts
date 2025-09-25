@@ -131,8 +131,13 @@ contract MiniSafeEdgeCasesTest is Test {
     address public user2 = address(0x2);
 
     function setUp() public {
-        // Deploy factory
-        factory = new MiniSafeFactoryUpgradeable();
+        // Deploy factory (non-upgradeable)
+        factory = new MiniSafeFactoryUpgradeable(
+            address(this),
+            address(0),
+            address(0),
+            address(0)
+        );
 
         // Deploy mock contracts
         token = new MockERC20("TOK", "TOK");

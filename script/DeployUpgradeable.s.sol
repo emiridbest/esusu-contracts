@@ -4,6 +4,9 @@ pragma solidity ^0.8.29;
 import "forge-std/Script.sol";
 import "../src/MiniSafeFactoryUpgradeable.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import "../src/MiniSafeAaveUpgradeable.sol";
+import "../src/MiniSafeTokenStorageUpgradeable.sol";
+import "../src/MiniSafeAaveIntegrationUpgradeable.sol";
 
 /**
  * @title DeployUpgradeable
@@ -28,28 +31,26 @@ contract DeployUpgradeable is Script {
         
         vm.startBroadcast(deployerPrivateKey);
         
-        // Deploy factory implementation
-        console2.log("Deploying MiniSafeFactoryUpgradeable implementation...");
-        MiniSafeFactoryUpgradeable factoryImplementation = new MiniSafeFactoryUpgradeable();
-        
-        // Deploy factory proxy with initialization
-        console2.log("Deploying MiniSafeFactoryUpgradeable proxy...");
-        bytes memory initData = abi.encodeWithSelector(
-            MiniSafeFactoryUpgradeable.initialize.selector,
-            deployer
+        // Deploy implementation contracts (used by proxies)
+        console2.log("Deploying MiniSafe implementations...");
+        MiniSafeAaveUpgradeable miniImpl = new MiniSafeAaveUpgradeable();
+        MiniSafeTokenStorageUpgradeable tokenImpl = new MiniSafeTokenStorageUpgradeable();
+        MiniSafeAaveIntegrationUpgradeable aaveImpl = new MiniSafeAaveIntegrationUpgradeable();
+
+        // Deploy factory directly (non-upgradeable)
+        console2.log("Deploying MiniSafeFactory (non-upgradeable)...");
+        MiniSafeFactoryUpgradeable factory = new MiniSafeFactoryUpgradeable(
+            deployer,
+            address(miniImpl),
+            address(tokenImpl),
+            address(aaveImpl)
         );
-        ERC1967Proxy factoryProxy = new ERC1967Proxy(
-            address(factoryImplementation),
-            initData
-        );
-        MiniSafeFactoryUpgradeable factory = MiniSafeFactoryUpgradeable(address(factoryProxy));
-        console2.log("Factory proxy deployed at:", address(factory));
+        console2.log("Factory deployed at:", address(factory));
         
-        // Get implementation addresses for verification
-        (address miniSafeImpl, address tokenStorageImpl, address aaveImpl) = factory.getImplementations();
-        console2.log("MiniSafe Implementation:", miniSafeImpl);
-        console2.log("TokenStorage Implementation:", tokenStorageImpl);
-        console2.log("AaveIntegration Implementation:", aaveImpl);
+        // Log implementation addresses for verification
+        console2.log("MiniSafe Implementation:", address(miniImpl));
+        console2.log("TokenStorage Implementation:", address(tokenImpl));
+        console2.log("AaveIntegration Implementation:", address(aaveImpl));
         
         // Deploy the MiniSafe system for single owner
         console2.log("\nDeploying MiniSafe system for single owner...");
@@ -85,28 +86,26 @@ contract DeployUpgradeable is Script {
         
         vm.startBroadcast(deployerPrivateKey);
         
-        // Deploy factory implementation
-        console2.log("Deploying MiniSafeFactoryUpgradeable implementation...");
-        MiniSafeFactoryUpgradeable factoryImplementation = new MiniSafeFactoryUpgradeable();
-        
-        // Deploy factory proxy with initialization
-        console2.log("Deploying MiniSafeFactoryUpgradeable proxy...");
-        bytes memory initData = abi.encodeWithSelector(
-            MiniSafeFactoryUpgradeable.initialize.selector,
-            deployer
+        // Deploy implementation contracts (used by proxies)
+        console2.log("Deploying MiniSafe implementations...");
+        MiniSafeAaveUpgradeable miniImpl = new MiniSafeAaveUpgradeable();
+        MiniSafeTokenStorageUpgradeable tokenImpl = new MiniSafeTokenStorageUpgradeable();
+        MiniSafeAaveIntegrationUpgradeable aaveImpl = new MiniSafeAaveIntegrationUpgradeable();
+
+        // Deploy factory directly (non-upgradeable)
+        console2.log("Deploying MiniSafeFactory (non-upgradeable)...");
+        MiniSafeFactoryUpgradeable factory = new MiniSafeFactoryUpgradeable(
+            deployer,
+            address(miniImpl),
+            address(tokenImpl),
+            address(aaveImpl)
         );
-        ERC1967Proxy factoryProxy = new ERC1967Proxy(
-            address(factoryImplementation),
-            initData
-        );
-        MiniSafeFactoryUpgradeable factory = MiniSafeFactoryUpgradeable(address(factoryProxy));
-        console2.log("Factory proxy deployed at:", address(factory));
+        console2.log("Factory deployed at:", address(factory));
         
-        // Get implementation addresses for verification
-        (address miniSafeImpl, address tokenStorageImpl, address aaveImpl) = factory.getImplementations();
-        console2.log("MiniSafe Implementation:", miniSafeImpl);
-        console2.log("TokenStorage Implementation:", tokenStorageImpl);
-        console2.log("AaveIntegration Implementation:", aaveImpl);
+        // Log implementation addresses for verification
+        console2.log("MiniSafe Implementation:", address(miniImpl));
+        console2.log("TokenStorage Implementation:", address(tokenImpl));
+        console2.log("AaveIntegration Implementation:", address(aaveImpl));
         
         // Multi-sig addresses (replace with real addresses)
         address[5] memory signers = [
