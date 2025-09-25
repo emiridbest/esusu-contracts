@@ -9,75 +9,18 @@ import "../src/MiniSafeTokenStorageUpgradeable.sol";
 import "../src/MiniSafeAaveIntegrationUpgradeable.sol";
 
 /**
- * @title DeployUpgradeable
- * @dev Deployment script for upgradeable MiniSafe system on Celo
- * @dev Maintains consistent addresses across upgrades for client integration
+ * @title DeployMultisig
+ * @dev Deployment script for upgradeable MiniSafe system with multisig governance on Celo
  */
-contract DeployUpgradeable is Script {
+contract DeployMultisig is Script {
     
     /// @dev Default Celo addresses
     address constant CELO_AAVE_PROVIDER = 0x9F7Cf9417D5251C59fE94fB9147feEe1aAd9Cea5;
-    address constant CUSD_TOKEN = 0x765DE816845861e75A25fCA122bb6898B8B1282a;
     
     /// @dev Deployment configuration
-    uint256 constant MIN_DELAY = 24 hours;
+    uint256 constant MULTISIG_DELAY = 5 minutes;
     
     function run() external {
-        uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
-        address deployer = vm.addr(deployerPrivateKey);
-        
-        console2.log("Deployer:", deployer);
-        console2.log("Deployer balance:", deployer.balance);
-        
-        vm.startBroadcast(deployerPrivateKey);
-        
-        // Deploy implementation contracts (used by proxies)
-        console2.log("Deploying MiniSafe implementations...");
-        MiniSafeAaveUpgradeable miniImpl = new MiniSafeAaveUpgradeable();
-        MiniSafeTokenStorageUpgradeable tokenImpl = new MiniSafeTokenStorageUpgradeable();
-        MiniSafeAaveIntegrationUpgradeable aaveImpl = new MiniSafeAaveIntegrationUpgradeable();
-
-        // Deploy factory directly (non-upgradeable)
-        console2.log("Deploying MiniSafeFactory (non-upgradeable)...");
-        MiniSafeFactoryUpgradeable factory = new MiniSafeFactoryUpgradeable(
-            deployer,
-            address(miniImpl),
-            address(tokenImpl),
-            address(aaveImpl)
-        );
-        console2.log("Factory deployed at:", address(factory));
-        
-        // Log implementation addresses for verification
-        console2.log("MiniSafe Implementation:", address(miniImpl));
-        console2.log("TokenStorage Implementation:", address(tokenImpl));
-        console2.log("AaveIntegration Implementation:", address(aaveImpl));
-        
-        // Deploy the MiniSafe system for single owner
-        console2.log("\nDeploying MiniSafe system for single owner...");
-        MiniSafeFactoryUpgradeable.MiniSafeAddresses memory addresses = factory.deployForSingleOwner(
-            deployer,
-            MIN_DELAY,
-            CELO_AAVE_PROVIDER
-        );
-        
-        console2.log("\n=== DEPLOYED SYSTEM ADDRESSES ===");
-        console2.log("Timelock Controller:", addresses.timelock);
-        console2.log("Token Storage Proxy:", addresses.tokenStorage);
-        console2.log("Aave Integration Proxy:", addresses.aaveIntegration);
-        console2.log("MiniSafe Proxy:", addresses.miniSafe);
-        
-        vm.stopBroadcast();
-        
-        // Note: File writing is disabled when broadcasting to actual networks
-        // Please manually record the deployment addresses shown above
-        console2.log("\nNOTE: Deployment information was displayed above but not saved to file due to network restrictions");
-        console2.log("Please manually record these addresses for your integration");
-    }
-    
-    /**
-     * @dev Deploy with multi-sig configuration
-     */
-    function deployMultiSig() external {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(deployerPrivateKey);
         
@@ -119,7 +62,7 @@ contract DeployUpgradeable is Script {
         console2.log("\nDeploying MiniSafe system with multi-sig...");
         MiniSafeFactoryUpgradeable.MiniSafeAddresses memory addresses = factory.deployWithRecommendedMultiSig(
             signers,
-            48 hours, // 48 hour delay for production
+            MULTISIG_DELAY,
             CELO_AAVE_PROVIDER
         );
         
@@ -152,4 +95,4 @@ contract DeployUpgradeable is Script {
         console2.log("Please manually record these addresses for your integration");
     }
     
-} 
+}

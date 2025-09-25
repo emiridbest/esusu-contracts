@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.29;
 
-import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import "@openzeppelin/contracts/governance/TimelockController.sol";
 import "./MiniSafeAaveUpgradeable.sol";
@@ -17,7 +15,7 @@ import "./MiniSafeAaveIntegrationUpgradeable.sol";
  * @dev Perfect for Celo deployment where address consistency is required
  * @dev Uses UUPS proxy pattern for upgradeability
  */
-contract MiniSafeFactoryUpgradeable is Initializable, OwnableUpgradeable, UUPSUpgradeable {
+contract MiniSafeFactoryUpgradeable is Ownable {
     
     /// @dev Implementation addresses
     address public miniSafeImplementation;
@@ -28,7 +26,7 @@ contract MiniSafeFactoryUpgradeable is Initializable, OwnableUpgradeable, UUPSUp
     struct UpgradeableConfig {
         address[] proposers;       // Addresses that can propose operations
         address[] executors;       // Addresses that can execute operations after delay
-        uint256 minDelay;         // Minimum delay for operations (24-48 hours)
+        uint256 minDelay;         // Minimum delay for operations (1 minute - 7 days)
         bool allowPublicExecution; // If true, anyone can execute after delay
         address aaveProvider;     // Aave pool addresses provider (0 for default Celo)
     }
@@ -61,27 +59,29 @@ contract MiniSafeFactoryUpgradeable is Initializable, OwnableUpgradeable, UUPSUp
     event ContractUpgraded(address indexed contractAddress, address indexed newImplementation);
     event BatchUpgradeCompleted(uint256 contractsUpgraded);
 
-    /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor() {
-        _disableInitializers();
-    }
-
     /**
-     * @dev Initialize the upgradeable factory contract
+     * @dev Construct a non-upgradeable factory and set implementation addresses
      * @param _initialOwner Address of the initial owner
+     * @param _miniSafeImpl Address of MiniSafe implementation
+     * @param _tokenStorageImpl Address of TokenStorage implementation
+     * @param _aaveIntegrationImpl Address of AaveIntegration implementation
      */
-    function initialize(address _initialOwner) external initializer {
-        __Ownable_init(_initialOwner);
-        __UUPSUpgradeable_init();
-        
-        // Deploy implementation contracts
-        _deployImplementations();
-    }
+    constructor(
+        address _initialOwner,
+        address _miniSafeImpl,
+        address _tokenStorageImpl,
+        address _aaveIntegrationImpl
+    ) Ownable(_initialOwner) {
+        miniSafeImplementation = _miniSafeImpl;
+        tokenStorageImplementation = _tokenStorageImpl;
+        aaveIntegrationImplementation = _aaveIntegrationImpl;
 
-    /**
-     * @dev Authorize upgrade - only owner can upgrade
-     */
-    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
+        emit ImplementationsDeployed(
+            miniSafeImplementation,
+            tokenStorageImplementation,
+            aaveIntegrationImplementation
+        );
+    }
 
     /**
      * @dev Get implementation version
@@ -93,36 +93,24 @@ contract MiniSafeFactoryUpgradeable is Initializable, OwnableUpgradeable, UUPSUp
     /**
      * @dev Deploy implementation contracts (only called once in initialize)
      */
-    function _deployImplementations() internal {
-        miniSafeImplementation = address(new MiniSafeAaveUpgradeable());
-        tokenStorageImplementation = address(new MiniSafeTokenStorageUpgradeable());
-        aaveIntegrationImplementation = address(new MiniSafeAaveIntegrationUpgradeable());
-
-        emit ImplementationsDeployed(
-            miniSafeImplementation,
-            tokenStorageImplementation,
-            aaveIntegrationImplementation
-        );
-    }
+    // Implementations are now provided to initialize(); no internal deployment.
 
     /**
      * @dev Validate deployment configuration
      * @param config Configuration to validate
      */
     function _validateConfig(UpgradeableConfig memory config) internal pure {
-        require(config.proposers.length > 0, "At least one proposer required");
-        require(config.executors.length > 0 || config.allowPublicExecution, "At least one executor required or public execution enabled");
-        require(config.minDelay >= 24 hours && config.minDelay <= 7 days, "Invalid delay: must be between 24 hours and 7 days");
-        
+        if (config.proposers.length == 0) revert();
+        if (!(config.minDelay >= 1 minutes && config.minDelay <= 7 days)) revert();
         // Validate proposer addresses
         for (uint256 i = 0; i < config.proposers.length; i++) {
-            require(config.proposers[i] != address(0), "Proposer cannot be zero address");
+            if (config.proposers[i] == address(0)) revert();
         }
-        
-        // Validate executor addresses (if not using public execution)
+        // Require executors unless public execution is enabled
+        if (!(config.executors.length > 0 || config.allowPublicExecution)) revert();
         if (!config.allowPublicExecution) {
             for (uint256 i = 0; i < config.executors.length; i++) {
-                require(config.executors[i] != address(0), "Executor cannot be zero address");
+                if (config.executors[i] == address(0)) revert();
             }
         }
     }
@@ -245,7 +233,7 @@ contract MiniSafeFactoryUpgradeable is Initializable, OwnableUpgradeable, UUPSUp
         // CEI Pattern: Emit event before external calls to prevent reentrancy
         emit MiniSafeUpgradeableDeployed(
             config.proposers,
-            config.executors,
+            executors, // emit actual executors used (mirrors proposers, plus zero if public)
             address(0), // Will be set after deployment
             address(0), // Will be set after deployment
             address(0), // Will be set after deployment
@@ -278,11 +266,11 @@ contract MiniSafeFactoryUpgradeable is Initializable, OwnableUpgradeable, UUPSUp
     ) external returns (MiniSafeAddresses memory addresses) {
         // Validate all signers
         for (uint256 i = 0; i < 5; i++) {
-            require(signers[i] != address(0), "Signer cannot be zero address");
+            if (signers[i] == address(0)) revert();
         }
 
         // Validate delay configuration
-        require(minDelay >= 24 hours && minDelay <= 7 days, "Invalid timelock configuration");
+        if (!(minDelay >= 1 minutes && minDelay <= 7 days)) revert();
 
         // Create dynamic arrays from fixed array
         address[] memory proposers = new address[](5);
@@ -305,6 +293,29 @@ contract MiniSafeFactoryUpgradeable is Initializable, OwnableUpgradeable, UUPSUp
     }
 
     /**
+     * @dev Deploy with explicit proposers and executors arrays (decoupled)
+     * @param proposers Dynamic array of proposer addresses
+     * @param executors Dynamic array of executor addresses
+     * @param minDelay Minimum delay for operations
+     * @param aaveProvider Aave provider address (0 for default)
+     */
+    function deployWithMultiSig(
+        address[] memory proposers,
+        address[] memory executors,
+        uint256 minDelay,
+        address aaveProvider
+    ) external returns (MiniSafeAddresses memory addresses) {
+        UpgradeableConfig memory config = UpgradeableConfig({
+            proposers: proposers,
+            executors: executors,
+            minDelay: minDelay,
+            allowPublicExecution: false,
+            aaveProvider: aaveProvider
+        });
+        return deployUpgradeableMiniSafe(config);
+    }
+
+    /**
      * @dev Deploy for single owner (development/testing)
      * @param owner Single owner address
      * @param minDelay Minimum delay for operations
@@ -316,13 +327,42 @@ contract MiniSafeFactoryUpgradeable is Initializable, OwnableUpgradeable, UUPSUp
         uint256 minDelay,
         address aaveProvider
     ) external returns (MiniSafeAddresses memory addresses) {
-        require(owner != address(0), "Owner cannot be zero address");
-        require(minDelay >= 24 hours && minDelay <= 7 days, "Invalid timelock configuration");
+        if (owner == address(0)) revert();
+        if (!(minDelay >= 1 minutes && minDelay <= 7 days)) revert();
 
         address[] memory proposers = new address[](1);
         address[] memory executors = new address[](1);
         proposers[0] = owner;
         executors[0] = owner;
+
+        UpgradeableConfig memory config = UpgradeableConfig({
+            proposers: proposers,
+            executors: executors,
+            minDelay: minDelay,
+            allowPublicExecution: false,
+            aaveProvider: aaveProvider
+        });
+
+        return deployUpgradeableMiniSafe(config);
+    }
+
+    /**
+     * @dev Deploy for single owner with distinct proposer and executor
+     * @param proposer Address with propose rights
+     * @param executor Address with execute rights
+     * @param minDelay Minimum delay for operations
+     * @param aaveProvider Aave provider address (0 for default)
+     */
+    function deployForSingleOwner(
+        address proposer,
+        address executor,
+        uint256 minDelay,
+        address aaveProvider
+    ) external returns (MiniSafeAddresses memory addresses) {
+        address[] memory proposers = new address[](1);
+        address[] memory executors = new address[](1);
+        proposers[0] = proposer;
+        executors[0] = executor;
 
         UpgradeableConfig memory config = UpgradeableConfig({
             proposers: proposers,
@@ -388,7 +428,7 @@ contract MiniSafeFactoryUpgradeable is Initializable, OwnableUpgradeable, UUPSUp
             // Contract call failed, not a known contract
         }
         
-        require(isKnownContract, "Contract not recognized as MiniSafe contract");
+        if (!isKnownContract) revert();
         
         // CEI Pattern: Emit event before external calls to prevent reentrancy
         emit ContractUpgraded(contractAddress, newImplementation);
@@ -406,7 +446,7 @@ contract MiniSafeFactoryUpgradeable is Initializable, OwnableUpgradeable, UUPSUp
                 abi.encodeWithSignature("upgradeToAndCall(address,bytes)", newImplementation, data)
             );
         }
-        require(success, "Upgrade failed");
+        if (!success) revert();
     }
 
     /**
@@ -415,46 +455,13 @@ contract MiniSafeFactoryUpgradeable is Initializable, OwnableUpgradeable, UUPSUp
      * @return bool Whether the address is a known MiniSafe contract
      */
     function isMiniSafeContract(address contractAddress) external view returns (bool) {
-        // Check if the contract address is valid
-        if (contractAddress == address(0)) {
-            return false;
+        if (
+            contractAddress == miniSafeImplementation ||
+            contractAddress == tokenStorageImplementation ||
+            contractAddress == aaveIntegrationImplementation
+        ) {
+            return true;
         }
-        
-        // Method 1: Try to call version() function and check for expected version
-        (bool versionSuccess, bytes memory versionResult) = contractAddress.staticcall(
-            abi.encodeWithSignature("version()")
-        );
-        
-        if (versionSuccess && versionResult.length > 0) {
-            string memory contractVersion = abi.decode(versionResult, (string));
-            // Check if it's our expected version
-            if (keccak256(bytes(contractVersion)) == keccak256(bytes("1.0.0"))) {
-                return true;
-            }
-        }
-        
-        // Method 2: Check if it has a proxy implementation that we recognize
-        address impl = this.getContractImplementation(contractAddress);
-        if (impl != address(0)) {
-            // Check if the implementation is one of our known implementations
-            if (impl == miniSafeImplementation || 
-                impl == tokenStorageImplementation || 
-                impl == aaveIntegrationImplementation) {
-                return true;
-            }
-            
-            // Try to call version on the implementation
-            (bool implVersionSuccess, bytes memory implVersionResult) = impl.staticcall(
-                abi.encodeWithSignature("version()")
-            );
-            if (implVersionSuccess && implVersionResult.length > 0) {
-                string memory implVersion = abi.decode(implVersionResult, (string));
-                if (keccak256(bytes(implVersion)) == keccak256(bytes("1.0.0"))) {
-                    return true;
-                }
-            }
-        }
-        
         return false;
     }
 
@@ -464,53 +471,9 @@ contract MiniSafeFactoryUpgradeable is Initializable, OwnableUpgradeable, UUPSUp
      * @return implementation Current implementation address
      */
     function getContractImplementation(address contractAddress) external view returns (address implementation) {
-        // Check if the contract address is valid
-        if (contractAddress == address(0)) {
-            return address(0);
-        }
-        
-        // Check if it has code
-        if (contractAddress.code.length == 0) {
-            return address(0);
-        }
-        
-        // For ERC1967 proxies, try to call the proxiableUUID function first
-        (bool uuidSuccess, ) = contractAddress.staticcall(
-            abi.encodeWithSignature("proxiableUUID()")
-        );
-        
-        if (uuidSuccess) {
-            // This is likely a UUPS proxy, try to get implementation via getImplementation()
-            (bool implSuccess, bytes memory implResult) = contractAddress.staticcall(
-                abi.encodeWithSignature("getImplementation()")
-            );
-            
-            if (implSuccess && implResult.length >= 32) {
-                return abi.decode(implResult, (address));
-            }
-        }
-        
-        // Try the standard implementation() function
-        (bool success, bytes memory result) = contractAddress.staticcall(
-            abi.encodeWithSignature("implementation()")
-        );
-        
-        if (success && result.length >= 32) {
-            return abi.decode(result, (address));
-        }
-        
-        // If all else fails, return the known implementations if we recognize the contract
-        // This is a fallback for our specific contracts
-        if (contractAddress == miniSafeImplementation) {
-            return miniSafeImplementation;
-        }
-        if (contractAddress == tokenStorageImplementation) {
-            return tokenStorageImplementation;
-        }
-        if (contractAddress == aaveIntegrationImplementation) {
-            return aaveIntegrationImplementation;
-        }
-        
+        if (contractAddress == miniSafeImplementation) return miniSafeImplementation;
+        if (contractAddress == tokenStorageImplementation) return tokenStorageImplementation;
+        if (contractAddress == aaveIntegrationImplementation) return aaveIntegrationImplementation;
         return address(0);
     }
 
@@ -523,14 +486,14 @@ contract MiniSafeFactoryUpgradeable is Initializable, OwnableUpgradeable, UUPSUp
         address[] calldata contractAddresses,
         address[] calldata newImplementations
     ) external onlyOwner {
-        require(contractAddresses.length == newImplementations.length, "Arrays length mismatch");
-        require(contractAddresses.length > 0, "Empty arrays");
-        require(contractAddresses.length <= 10, "Too many contracts to upgrade at once");
+        if (contractAddresses.length != newImplementations.length) revert();
+        if (contractAddresses.length == 0) revert();
+        if (contractAddresses.length > 10) revert();
         
         // CEI Pattern: First validate all contracts before any external calls
         for (uint256 i = 0; i < contractAddresses.length; i++) {
-            require(contractAddresses[i] != address(0), "Invalid contract address");
-            require(newImplementations[i] != address(0), "Invalid implementation address");
+            if (contractAddresses[i] == address(0)) revert();
+            if (newImplementations[i] == address(0)) revert();
             
             // Verify it's a known contract (this is an external call)
             bool isKnownContract = false;
@@ -542,7 +505,7 @@ contract MiniSafeFactoryUpgradeable is Initializable, OwnableUpgradeable, UUPSUp
                 // Contract call failed
             }
             
-            require(isKnownContract, "Contract not recognized as MiniSafe contract");
+            if (!isKnownContract) revert();
         }
         
         // CEI Pattern: Emit all events before performing upgrades
@@ -557,7 +520,7 @@ contract MiniSafeFactoryUpgradeable is Initializable, OwnableUpgradeable, UUPSUp
             (bool success, ) = contractAddresses[i].call(
                 abi.encodeWithSignature("upgradeTo(address)", newImplementations[i])
             );
-            require(success, "Upgrade failed");
+            if (!success) revert();
         }
     }
 
