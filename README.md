@@ -51,6 +51,18 @@ The following table maps findings from the [Initial Audit Report](./audit/audit%
 | **M-8** | Short Month Logic | Rewrote `canWithdraw` to use calendar-aware "last 3 days of month" logic. | `testAudit_M8_WithdrawalWindow` |
 | **M-9** | Duplicate Signers | Added uniqueness check in `deployWithRecommendedMultiSig`. | `testAudit_M9_DuplicateSigners` |
 
+### Low Severity Findings
+
+| ID  | Finding Title | Implementation Fix | Verification Test |
+| :-- | :--- | :--- | :--- |
+| **L-1** | Event Ambiguity | Separated `PoolDataProviderUpdated` and `AavePoolUpdated` events. | Structural check. |
+| **L-2** | Timestamp Overwrite | `updateUserTokenShare` now only sets `depositTime` once on first deposit. | `testAudit_L2_DepositTimestamp` |
+| **L-3** | Misleading Error | Updated `withdrawFromAave` error message for zero-amount withdrawals. | `testAudit_L3_withdrawFromAave` (Manual) |
+| **L-4** | Hardcoded Provider | Removed hardcoded fallback; `aaveProvider` is now an explicit factory parameter. | `testAudit_L4_NoHardcodedProvider` |
+| **L-5** | Storage Pause Inactive | Applied `whenNotPaused` modifiers to state-changing functions in `TokenStorage`. | `testAudit_L5_TokenStoragePause` |
+| **L-6** | Activation Date Limit | Changed `activateThriftGroup` to allow activation *on* the start date (`<=`). | `testAudit_L6_ActivationDate` |
+
+
 ---
 
 ## Technical Deep Dive: Yield & Accounting
