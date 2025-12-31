@@ -71,7 +71,8 @@ contract MockAavePoolAudit {
         MockATokenAudit(aToken).mint(onBehalfOf, amount);
     }
     
-    function withdraw(address, uint256 amount, address) external returns (uint256) {
+    function withdraw(address token, uint256 amount, address to) external returns (uint256) {
+        MockERC20Audit(token).mint(to, amount);
         return amount; 
     }
 }
@@ -707,5 +708,103 @@ contract AuditFixesTest is Test {
         uint256 secondTimestamp = miniSafe.getUserDepositTime(user1, address(mockToken));
         // L-2 Fix: Timestamp should remain unchanged
         assertEq(secondTimestamp, t1, "Second deposit should NOT overwrite original timestamp");
+    }
+
+    function testAudit_M3_ThriftYield() public {
+        // Setup: Personal Saver (Alice)
+        address alice = address(0xAAAAA);
+        mockToken.mint(alice, 1000 ether);
+        vm.prank(alice);
+        mockToken.approve(address(miniSafe), 1000 ether);
+        
+        // Alice deposits 1000 ether
+        vm.prank(alice);
+        miniSafe.deposit(address(mockToken), 1000 ether);
+        
+        // Thrift Group: Bob and Charlie
+        address bob = address(0xBBBBB);
+        address charlie = address(0xCCCCC);
+        mockToken.mint(bob, 500 ether);
+        mockToken.mint(charlie, 500 ether);
+        
+        // Create group (500 ether per cycle, 30 days duration)
+        // Bob is the admin and first member
+        vm.prank(bob);
+        uint256 groupId = miniSafe.createThriftGroup(500 ether, block.timestamp + 1 days, true, address(mockToken));
+        
+        // Charlie joins
+        vm.prank(charlie);
+        miniSafe.joinPublicGroup(groupId);
+        
+        (,,,,,uint256 memberCount,,,) = miniSafe.getGroupInfo(groupId);
+        assertEq(memberCount, 2, "Should have 2 members");
+
+        // Set payout order [bob, charlie]
+        address[] memory payoutOrder = new address[](2);
+        payoutOrder[0] = bob;
+        payoutOrder[1] = charlie;
+        vm.prank(bob);
+        miniSafe.setPayoutOrder(groupId, payoutOrder);
+        
+        // Activate
+        vm.prank(bob);
+        miniSafe.activateThriftGroup(groupId);
+        
+        // Start date warp
+        vm.warp(block.timestamp + 1 days);
+        
+        // Contributions
+        vm.prank(bob); // Early contributor (Day 1)
+        mockToken.approve(address(miniSafe), 500 ether);
+        vm.prank(bob);
+        miniSafe.makeContribution(groupId, address(mockToken), 500 ether);
+        
+        // Warp 15 days
+        vm.warp(block.timestamp + 15 days);
+        
+        vm.prank(charlie); // Late contributor (Day 16)
+        mockToken.approve(address(miniSafe), 500 ether);
+        vm.prank(charlie);
+        miniSafe.makeContribution(groupId, address(mockToken), 500 ether);
+        
+        // Total principal = 2000 ether (1000 Alice, 1000 Thrift)
+        
+        // Simulate Yield: +300 ether
+        // Total value = 2300 ether
+        mockAToken.mint(address(integration), 300 ether);
+        
+        // Warp to payout date (30 days after start)
+        vm.warp(block.timestamp + 16 days); 
+        
+        uint256 bobBalBefore = mockToken.balanceOf(bob);
+        uint256 charlieBalBefore = mockToken.balanceOf(charlie);
+        
+        // Expected Yield Distribution:
+        // Total Yield = 300
+        // Thrift Share = 1/2 = 150 ether (1000/2000)
+        // Bob weight: ~31 days (from T=1). Charlie weight: ~15 days. Total: 46.
+        // Actually let's just assertApproxEq for simplicity if the math is slightly off due to 1 second
+        
+
+        // Trigger Payout
+        vm.prank(bob); 
+        miniSafe.distributePayout(groupId);
+        
+        // Bob weight: 31 days. Charlie weight: 16 days. Total: 47.
+        // Bob yield share: 150 * 31/47 = 98.936...
+        // Charlie yield share: 150 * 16/47 = 51.063...
+        
+        assertApproxEqAbs(mockToken.balanceOf(bob), bobBalBefore + 1000 ether + 98.936 ether, 0.01 ether, "Bob should receive principal + ~98.9 yield");
+        assertApproxEqAbs(mockToken.balanceOf(charlie), charlieBalBefore + 51.063 ether, 0.01 ether, "Charlie should receive ~51.1 yield");
+        
+        // Verify Alice's isolation
+        // Alice should have 1000 + 150 = 1150 ether worth of assets
+        uint256 aliceShares = miniSafe.getUserBalance(alice, address(mockToken));
+        uint256 totalShares = miniSafe.getTotalShares(address(mockToken));
+        
+        // After thrift payout, thrift shares (address(this)) should be 0
+        uint256 thriftShares = miniSafe.getUserBalance(address(miniSafe), address(mockToken));
+        assertEq(thriftShares, 0, "Thrift pool shares should be burned after payout");
+        assertEq(totalShares, aliceShares, "Total shares should now only match Alice's");
     }
 }

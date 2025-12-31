@@ -101,6 +101,14 @@ contract MiniSafeAaveUpgradeable is
     /// @dev Array of all payouts
     Payout[] public payouts;
 
+    // M-3: THRIFT YIELD STORAGE
+    /// @dev Total amount of thrift group funds currently deposited in Aave per token
+    mapping(address => uint256) public totalThriftStaked;
+
+    /// @dev Record when each member contributed to their group in the current cycle
+    /// @dev groupId => memberAddress => timestamp
+    mapping(uint256 => mapping(address => uint256)) public cycleContributionTime;
+
     /// @dev Thrift Events
     event ThriftGroupCreated(
         uint256 indexed groupId,
@@ -118,6 +126,7 @@ contract MiniSafeAaveUpgradeable is
     event GroupActivated(uint256 indexed groupId);
     event GroupDeactivated(uint256 indexed groupId);
     event RefundIssued(uint256 indexed groupId, address indexed member, uint256 amount);
+    event ThriftYieldDistributed(uint256 indexed groupId, address indexed member, uint256 amount);
 
     // Standard events are inherited from IMiniSafeCommon
 
@@ -945,8 +954,33 @@ contract MiniSafeAaveUpgradeable is
         require(block.timestamp >= group.startDate, "Group has not started yet");
         require(!group.hasPaidThisCycle[msg.sender], "Already contributed this cycle");
 
-        // Transfer tokens from user to this contract
-        IERC20(tokenAddress).safeTransferFrom(msg.sender, address(this), amount);
+        // M-3 Fix: Deposit contribution to Aave to earn yield
+        // Record contribution timestamp for yield calculation
+        cycleContributionTime[groupId][msg.sender] = block.timestamp;
+
+        // M-3 Fix: Deposit contribution to Aave to earn yield via the contract's virtual account
+        uint256 totalAssets = aaveIntegration.getATokenBalance(tokenAddress);
+        uint256 totalShares = tokenStorage.getTotalShares(tokenAddress);
+
+        // Transfer tokens from user to Aave integration contract
+        IERC20(tokenAddress).safeTransferFrom(msg.sender, address(aaveIntegration), amount);
+
+        // Deposit to Aave through integration
+        uint256 assetsDeposited = aaveIntegration.depositToAave(tokenAddress, amount);
+
+        // Calculate shares for the thrift pool (address(this))
+        uint256 sharesToMint;
+        if (totalShares == 0 || totalAssets == 0) {
+            sharesToMint = assetsDeposited;
+        } else {
+            sharesToMint = (assetsDeposited * totalShares) / totalAssets;
+        }
+
+        // Update address(this) balance to track thrift pool's share of yield
+        updateUserBalance(address(this), tokenAddress, sharesToMint, true);
+
+        // Update total thrift staked for isolation accounting
+        totalThriftStaked[tokenAddress] += assetsDeposited;
 
         // Update group state
         group.contributions[msg.sender] += amount;
@@ -1022,14 +1056,30 @@ contract MiniSafeAaveUpgradeable is
         uint256 amount = group.contributions[msg.sender];
         require(amount > 0, "No contribution to withdraw");
 
-        // State changes first
+        // M-3 Fix: Withdraw from Aave and update virtual account accounting
+        uint256 totalAssets = aaveIntegration.getATokenBalance(group.tokenAddress);
+        uint256 totalGlobalShares = tokenStorage.getTotalShares(group.tokenAddress);
+        uint256 poolShares = tokenStorage.getUserTokenShare(address(this), group.tokenAddress);
+
+        // Calculate shares to burn based on the principal amount being withdrawn
+        uint256 sharesToBurn = totalAssets > 0 ? (amount * totalGlobalShares) / totalAssets : 0;
+        if (sharesToBurn > poolShares) sharesToBurn = poolShares;
+
+        // State changes first (CEI)
         group.contributions[msg.sender] = 0;
         group.hasPaidThisCycle[msg.sender] = false;
         group.totalContributed[msg.sender] -= amount;
         group.isActive = false; // deactivate group on emergency withdrawal
+        
+        // Update global thrift tracking
+        updateUserBalance(address(this), group.tokenAddress, sharesToBurn, false);
+        totalThriftStaked[group.tokenAddress] = totalThriftStaked[group.tokenAddress] > amount
+            ? totalThriftStaked[group.tokenAddress] - amount
+            : 0;
+        delete cycleContributionTime[groupId][msg.sender];
 
-        // Transfer contribution back to admin
-        IERC20(group.tokenAddress).safeTransfer(msg.sender, amount);
+        // Withdraw contribution from Aave back to admin
+        aaveIntegration.withdrawFromAave(group.tokenAddress, amount, msg.sender);
 
         emit EmergencyWithdraw(groupId, msg.sender, amount);
     }
@@ -1070,27 +1120,91 @@ contract MiniSafeAaveUpgradeable is
     function _processPayout(uint256 groupId, address tokenAddress) internal {
         ThriftGroup storage group = thriftGroups[groupId];
         
-        // Calculate total payout amount
-        uint256 totalPayout = group.contributionAmount * group.members.length;
+        // M-3 Fix: Calculate time-weighted yield distribution using virtual account shares
+        uint256 totalAssets = aaveIntegration.getATokenBalance(tokenAddress);
+        uint256 totalGlobalShares = tokenStorage.getTotalShares(tokenAddress);
+        uint256 poolShares = tokenStorage.getUserTokenShare(address(this), tokenAddress);
         
+        // Total value currently held by the thrift pool (principal + yield)
+        uint256 totalPoolValue = totalGlobalShares > 0 
+            ? (poolShares * totalAssets) / totalGlobalShares 
+            : 0;
+        
+        // This group's share of the pool based on its principal contribution
+        uint256 groupPrincipal = group.contributionAmount * group.members.length;
+        
+        // Calculate this group's total value (Principal + Yield share)
+        uint256 groupValue = totalThriftStaked[tokenAddress] > 0 
+            ? (totalPoolValue * groupPrincipal) / totalThriftStaked[tokenAddress]
+            : groupPrincipal;
+            
+        uint256 yieldEarned = groupValue > groupPrincipal ? groupValue - groupPrincipal : 0;
+
         // Get current recipient based on payout order and cycle
         uint256 recipientIndex = (group.currentCycle - 1) % group.payoutOrder.length;
         address recipient = group.payoutOrder[recipientIndex];
 
-        // Transfer the total payout to recipient
-        IERC20(tokenAddress).safeTransfer(recipient, totalPayout);
+        // Withdraw total group value from Aave to this contract
+        aaveIntegration.withdrawFromAave(tokenAddress, groupValue, address(this));
+
+        // Time-weighted yield distribution to ALL members
+        if (yieldEarned > 0) {
+            uint256 payoutTime = block.timestamp;
+            uint256 totalWeightedTime = 0;
+            
+            // First pass: calculate total weighted time
+            for (uint i = 0; i < group.members.length; i++) {
+                uint256 memberTime = payoutTime > cycleContributionTime[groupId][group.members[i]]
+                    ? payoutTime - cycleContributionTime[groupId][group.members[i]]
+                    : 1;
+                totalWeightedTime += memberTime;
+            }
+            
+            // Second pass: distribute yield proportionally
+            if (totalWeightedTime > 0) {
+                for (uint i = 0; i < group.members.length; i++) {
+                    address member = group.members[i];
+                    uint256 memberTime = payoutTime > cycleContributionTime[groupId][member]
+                        ? payoutTime - cycleContributionTime[groupId][member]
+                        : 1;
+                    
+                    uint256 memberYield = (yieldEarned * memberTime) / totalWeightedTime;
+                    
+                    if (memberYield > 0) {
+                        IERC20(tokenAddress).safeTransfer(member, memberYield);
+                        emit ThriftYieldDistributed(groupId, member, memberYield);
+                    }
+                    
+                    // Reset contribution time for next cycle
+                    delete cycleContributionTime[groupId][member];
+                }
+            }
+        }
+
+        // Transfer the principal payout to recipient
+        IERC20(tokenAddress).safeTransfer(recipient, groupPrincipal);
+
+        // Update virtual account shares (burn shares equivalent to the groupValue withdrawn)
+        uint256 sharesToBurn = totalAssets > 0 ? (groupValue * totalGlobalShares) / totalAssets : 0;
+        if (sharesToBurn > poolShares) sharesToBurn = poolShares;
+        updateUserBalance(address(this), tokenAddress, sharesToBurn, false);
+        
+        // Update global thrift principal tracking
+        totalThriftStaked[tokenAddress] = totalThriftStaked[tokenAddress] > groupPrincipal
+            ? totalThriftStaked[tokenAddress] - groupPrincipal
+            : 0;
 
         // Record the payout
         payouts.push(Payout({
             payoutId: totalPayouts,
             groupId: groupId,
             recipient: recipient,
-            amount: totalPayout,
+            amount: groupPrincipal,
             timestamp: block.timestamp,
             cycle: group.currentCycle
         }));
 
-        emit PayoutDistributed(groupId, recipient, totalPayout, group.currentCycle);
+        emit PayoutDistributed(groupId, recipient, groupPrincipal, group.currentCycle);
         totalPayouts++;
 
         // Reset for next cycle
@@ -1211,10 +1325,24 @@ contract MiniSafeAaveUpgradeable is
         // INTERACTIONS: External calls last
         // Refund any contributions made
         if (refundAmount > 0) {
-            // FIX H-12 & H-13: 
-            // 1. Do NOT call updateUserBalance (no shares to burn for thrift contributions).
-            // 2. DO call safeTransfer to actually refund tokens.
-            IERC20(tokenAddress).safeTransfer(msg.sender, refundAmount);
+            // M-3 Fix: Withdraw from Aave and update virtual account accounting
+            uint256 totalAssets = aaveIntegration.getATokenBalance(tokenAddress);
+            uint256 totalGlobalShares = tokenStorage.getTotalShares(tokenAddress);
+            uint256 poolShares = tokenStorage.getUserTokenShare(address(this), tokenAddress);
+
+            // Calculate shares to burn based on the principal amount being withdrawn
+            uint256 sharesToBurn = totalAssets > 0 ? (refundAmount * totalGlobalShares) / totalAssets : 0;
+            if (sharesToBurn > poolShares) sharesToBurn = poolShares;
+
+            // Update global thrift tracking
+            updateUserBalance(address(this), tokenAddress, sharesToBurn, false);
+            totalThriftStaked[tokenAddress] = totalThriftStaked[tokenAddress] > refundAmount
+                ? totalThriftStaked[tokenAddress] - refundAmount
+                : 0;
+            delete cycleContributionTime[groupId][msg.sender];
+
+            // Withdraw contribution from Aave through the integration contract to member
+            aaveIntegration.withdrawFromAave(tokenAddress, refundAmount, msg.sender);
             
             emit RefundIssued(groupId, msg.sender, refundAmount);
         }
