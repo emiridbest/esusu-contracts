@@ -480,13 +480,21 @@ contract MiniSafeThriftCompleteTest is Test {
         vm.prank(user1);
         thrift.makeContribution(groupId);
         
-        // User2 makes contribution - this triggers automatic payout to user1
-        uint256 balanceBefore = mockToken.balanceOf(user1);
-        
+        // User2 makes contribution
         vm.prank(user2);
         mockToken.approve(address(thrift), 100 * 10**18);
         vm.prank(user2);
         thrift.makeContribution(groupId, address(mockToken), 100 * 10**18);
+        
+        // M-6 Fix: Payouts now require nextPayoutDate to be reached
+        (, , uint256 nextPayoutDate, , , , , , ) = thrift.getGroupInfo(groupId);
+        vm.warp(nextPayoutDate);
+        
+        uint256 balanceBefore = mockToken.balanceOf(user1);
+        
+        // Trigger payout explicitly
+        vm.prank(user1);
+        thrift.distributePayout(groupId);
         
         // Check that user1 received the payout (200 tokens total from both contributions)
         uint256 balanceAfter = mockToken.balanceOf(user1);
@@ -838,6 +846,7 @@ contract MiniSafeThriftCompleteTest is Test {
         vm.warp(nextPayoutDate);
         
         // Trigger payout explicitly (since automatic payout requires time)
+        vm.prank(user1); // user1 is the group admin
         thrift.distributePayout(groupId);
         
         // user1 received payout, now tries to leave - should revert because group is still active
@@ -1022,7 +1031,7 @@ contract MiniSafeThriftCompleteTest is Test {
         
         vm.warp(block.timestamp + 1 days);
         
-        // Make contributions to trigger payout
+        // Make contributions
         vm.prank(user1);
         mockToken.approve(address(thrift), 100 * 10**18);
         vm.prank(user1);
@@ -1032,6 +1041,14 @@ contract MiniSafeThriftCompleteTest is Test {
         mockToken.approve(address(thrift), 100 * 10**18);
         vm.prank(user2);
         thrift.makeContribution(groupId);
+        
+        // M-6 Fix: Payouts now require nextPayoutDate to be reached
+        (, , uint256 nextPayoutDate, , , , , , ) = thrift.getGroupInfo(groupId);
+        vm.warp(nextPayoutDate);
+        
+        // Trigger payout explicitly
+        vm.prank(user1);
+        thrift.distributePayout(groupId);
         
         // Get payouts for the group
         MiniSafeAaveUpgradeable.Payout[] memory payouts = thrift.getGroupPayouts(groupId);
@@ -1101,11 +1118,22 @@ contract MiniSafeThriftCompleteTest is Test {
         // Still not all members contributed
         assertFalse(thrift.allMembersContributed(groupId));
         
-        // User2 contributes - this triggers automatic payout and cycle reset
+        // User2 contributes
         vm.prank(user2);
         mockToken.approve(address(thrift), 100 * 10**18);
         vm.prank(user2);
         thrift.makeContribution(groupId);
+        
+        // After contributions, allMembersContributed should be true (before payout)
+        assertTrue(thrift.allMembersContributed(groupId));
+        
+        // M-6 Fix: Payouts now require nextPayoutDate to be reached
+        (, , uint256 nextPayoutDate, , , , , , ) = thrift.getGroupInfo(groupId);
+        vm.warp(nextPayoutDate);
+        
+        // Trigger payout explicitly
+        vm.prank(user1);
+        thrift.distributePayout(groupId);
         
         // After payout, cycle resets so allMembersContributed should be false
         assertFalse(thrift.allMembersContributed(groupId));
@@ -1136,11 +1164,19 @@ contract MiniSafeThriftCompleteTest is Test {
         vm.prank(user1);
         thrift.makeContribution(groupId);
         
-        // User2 contributes - this triggers automatic payout and cycle reset
+        // User2 contributes
         vm.prank(user2);
         mockToken.approve(address(thrift), 100 * 10**18);
         vm.prank(user2);
         thrift.makeContribution(groupId);
+        
+        // M-6 Fix: Payouts now require nextPayoutDate to be reached
+        (, , uint256 nextPayoutDate, , , , , , ) = thrift.getGroupInfo(groupId);
+        vm.warp(nextPayoutDate);
+        
+        // Trigger payout explicitly
+        vm.prank(user1);
+        thrift.distributePayout(groupId);
         
         // After payout, cycle resets so allMembersContributed should be false
         assertFalse(thrift.allMembersContributed(groupId));

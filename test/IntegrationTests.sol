@@ -383,8 +383,8 @@ contract IntegrationTests is Test {
         // Execute emergency withdrawal immediately (M-2 Fix: No timelock)
         miniSafe.executeEmergencyWithdrawal(address(mockToken));
         
-        // Verify owner received funds (100 ether from pool)
-        assertEq(mockToken.balanceOf(address(this)), 1000 ether + 100 ether, "Owner should receive emergency funds");
+        // Verify owner received funds (100 ether from deposit + 100 ether extra minted = 200 total)
+        assertEq(mockToken.balanceOf(address(this)), 1000 ether + 200 ether, "Owner should receive emergency funds");
     }
 
     function testMiniSafe_CircuitBreakerFlow() public {
@@ -488,9 +488,16 @@ contract IntegrationTests is Test {
             vm.prank(user3);
             miniSafe.makeContribution(groupId, address(mockToken), 100 ether);
             
-            // Fast forward to next cycle before next iteration
+            // M-6 Fix: Payouts now require nextPayoutDate to be reached
+            (, , uint256 nextPayoutDate, , , , , , ) = miniSafe.getGroupInfo(groupId);
+            vm.warp(nextPayoutDate);
+            
+            // Trigger payout explicitly (this resets the cycle)
+            miniSafe.distributePayout(groupId);
+            
+            // Fast forward a bit more for next cycle
             if (i < 2) { // Don't advance after last cycle
-                vm.warp(block.timestamp + 30 days);
+                vm.warp(block.timestamp + 1 days);
             }
         }
     }
