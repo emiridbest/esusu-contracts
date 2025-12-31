@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.29;
 
-import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "./IMiniSafeCommon.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+
+import {IMiniSafeCommon} from "./IMiniSafeCommon.sol";
 
 /**
  * @title MiniSafeTokenStorageUpgradeable
@@ -60,6 +60,24 @@ contract MiniSafeTokenStorageUpgradeable is Initializable, OwnableUpgradeable, P
         
         // Set default cUSD address for Celo
         cusdTokenAddress = 0x765DE816845861e75A25fCA122bb6898B8B1282a;
+        
+        // M-5 Fix: Initialize base token info
+        tokenInfo[cusdTokenAddress] = TokenInfo({
+            isSupported: true,
+            // Use same address for aToken (or 0 if not supported by Aave yet, but let's assume it should have one)
+            // Ideally should be set via addSupportedToken equivalent logic, but for init we can set basic support.
+            // If we don't know aToken, we should probably just mark it as supported base token.
+            // However, getUserDepositTime checks isValidToken which checks cusdTokenAddress explicitly.
+            // But getTotalShares checks isValidToken.
+            // The issue description says "cUSD Token Initialization Failure".
+            // Let's ensure it's properly in tokenInfo if that's what's missing.
+            // Actually, `isValidToken` returns true if `tokenAddress == cusdTokenAddress`.
+            // But `getTokenATokenAddress` requires `tokenInfo` or returns `tokenInfo[...].aTokenAddress`.
+            // If we access `tokenInfo[cusd]`, it's empty.
+            // So we need to set it.
+            aTokenAddress: address(0), // Will be updated by Aave Integration init or manual set
+            totalShares: 0
+        });
     }
 
     /**
@@ -108,7 +126,7 @@ contract MiniSafeTokenStorageUpgradeable is Initializable, OwnableUpgradeable, P
      * @param manager Address of the manager
      * @param authorized Whether the manager is authorized
      */
-    function setManagerAuthorization(address manager, bool authorized) external onlyOwner {
+    function setManagerAuthorization(address manager, bool authorized) external onlyOwner whenNotPaused {
         require(manager != address(0), "Cannot authorize zero address");
         authorizedManagers[manager] = authorized;
         emit ManagerAuthorized(manager, authorized);
@@ -122,7 +140,7 @@ contract MiniSafeTokenStorageUpgradeable is Initializable, OwnableUpgradeable, P
      * @param aTokenAddress Address of the corresponding aToken
      * @return success Whether the operation was successful
      */
-    function addSupportedToken(address tokenAddress, address aTokenAddress) external virtual onlyAuthorizedManager returns (bool success) {
+    function addSupportedToken(address tokenAddress, address aTokenAddress) external virtual onlyAuthorizedManager whenNotPaused returns (bool success) {
         require(tokenAddress != address(0), "Cannot add zero address as token");
         require(aTokenAddress != address(0), "aToken address cannot be zero");
         require(!tokenInfo[tokenAddress].isSupported, "Token already supported");
@@ -143,7 +161,7 @@ contract MiniSafeTokenStorageUpgradeable is Initializable, OwnableUpgradeable, P
      * @param tokenAddress Address of the token to remove
      * @return success Whether the operation was successful
      */
-    function removeSupportedToken(address tokenAddress) external onlyOwner returns (bool success) {
+    function removeSupportedToken(address tokenAddress) external onlyOwner whenNotPaused returns (bool success) {
         require(tokenAddress != cusdTokenAddress, "Cannot remove base token");
         require(tokenInfo[tokenAddress].isSupported, "Token not supported");
         require(tokenInfo[tokenAddress].totalShares == 0, "Token still has deposits");
@@ -215,14 +233,17 @@ contract MiniSafeTokenStorageUpgradeable is Initializable, OwnableUpgradeable, P
         address tokenAddress,
         uint256 shareAmount,
         bool isDeposit
-    ) external onlyAuthorizedManager onlyValidToken(tokenAddress) returns (bool success) {
+    ) external onlyAuthorizedManager onlyValidToken(tokenAddress) whenNotPaused returns (bool success) {
         require(user != address(0), "Cannot update zero address");
         
         InternalUserBalance storage userBalance = userBalances[user];
 
         if (isDeposit) {
+            // L-2 Fix: Only track first deposit time (don't overwrite on subsequent deposits)
+            if (userBalance.tokenShares[tokenAddress] == 0) {
+                userBalance.depositTime[tokenAddress] = block.timestamp;
+            }
             userBalance.tokenShares[tokenAddress] += shareAmount;
-            userBalance.depositTime[tokenAddress] = block.timestamp;
             tokenInfo[tokenAddress].totalShares += shareAmount;
         } else {
             require(userBalance.tokenShares[tokenAddress] >= shareAmount, "Insufficient shares");

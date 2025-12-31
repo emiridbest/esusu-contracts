@@ -1,16 +1,17 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.29;
 
-import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@aave/contracts/interfaces/IPoolAddressesProvider.sol";
-import "@aave/contracts/interfaces/IPool.sol";
-import "@aave/contracts/interfaces/IPoolDataProvider.sol";
-import "./IMiniSafeCommon.sol";
-import "./MiniSafeTokenStorageUpgradeable.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {IPoolAddressesProvider} from "@aave/contracts/interfaces/IPoolAddressesProvider.sol";
+import {IPool} from "@aave/contracts/interfaces/IPool.sol";
+import {IPoolDataProvider} from "@aave/contracts/interfaces/IPoolDataProvider.sol";
+import {IMiniSafeCommon} from "./IMiniSafeCommon.sol";
+import {MiniSafeTokenStorageUpgradeable} from "./MiniSafeTokenStorageUpgradeable.sol";
+import {IRewardsController} from "./IRewardsController.sol";
 
 /**
  * @title MiniSafeAaveIntegrationUpgradeable
@@ -127,7 +128,7 @@ contract MiniSafeAaveIntegrationUpgradeable is Initializable, OwnableUpgradeable
         // Re-initialize base tokens with the new pool
         // (Call initializeBaseTokens() externally after ownership transfer if needed)
 
-        emit AavePoolUpdated(newPoolAddress);
+        emit PoolDataProviderUpdated(newPoolAddress);
     }
 
     /**
@@ -262,7 +263,7 @@ contract MiniSafeAaveIntegrationUpgradeable is Initializable, OwnableUpgradeable
         } catch {
             revert("Aave withdraw failed");
         }
-        require(amountWithdrawn > 0, "aToken address not found");
+        require(amountWithdrawn > 0, "Withdrawal returned zero amount");
 
         // Transfer withdrawn tokens to recipient
         IERC20(tokenAddress).safeTransfer(recipient, amountWithdrawn);
@@ -282,6 +283,22 @@ contract MiniSafeAaveIntegrationUpgradeable is Initializable, OwnableUpgradeable
         return IERC20(aTokenAddress).balanceOf(address(this));
     }
 
+    /**
+     * @dev Claim rewards from Aave RewardsController
+     * @param rewardsController Address of the RewardsController
+     * @param assets List of assets (aTokens/debtTokens) to claim rewards for
+     * @param to Address to receive the rewards
+     */
+    function claimRewards(
+        address rewardsController,
+        address[] calldata assets,
+        address to
+    ) external onlyAuthorizedManager returns (address[] memory rewardsList, uint256[] memory claimedAmounts) {
+        require(rewardsController != address(0), "Invalid controller");
+        require(to != address(0), "Invalid recipient");
+        return IRewardsController(rewardsController).claimAllRewards(assets, to);
+    }
+    
     /**
      * @dev Emergency function to withdraw all tokens (only owner)
      * @param tokenAddress Address of the token

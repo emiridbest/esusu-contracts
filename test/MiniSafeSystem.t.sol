@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.29;
 
-import "forge-std/Test.sol";
-import "../src/MiniSafeFactoryUpgradeable.sol";
-import "../src/MiniSafeAaveUpgradeable.sol";
-import "../src/MiniSafeAaveIntegrationUpgradeable.sol";
-import "@openzeppelin/contracts/governance/TimelockController.sol";
-import "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
-import "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
-import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {Test} from "forge-std/Test.sol";
+import {MiniSafeFactoryUpgradeable} from "../src/MiniSafeFactoryUpgradeable.sol";
+import {MiniSafeAaveUpgradeable} from "../src/MiniSafeAaveUpgradeable.sol";
+import {MiniSafeAaveIntegrationUpgradeable} from "../src/MiniSafeAaveIntegrationUpgradeable.sol";
+import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
+import {ProxyAdmin} from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
+
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
 // Mock Aave Provider for testing
 contract MockAaveProvider {
@@ -35,7 +35,7 @@ contract MiniSafeFactoryUpgradeableTest is Test {
     address public executor1 = address(0x4);
     address public executor2 = address(0x5);
     
-    uint256 public constant MIN_DELAY = 24 hours;
+    uint256 public constant MIN_DELAY = 48 hours;
     uint256 public constant MAX_DELAY = 7 days;
 
     event ImplementationsDeployed(address miniSafeImpl, address tokenStorageImpl, address aaveIntegrationImpl);
@@ -272,8 +272,8 @@ contract MiniSafeAaveIntegrationUpgradeableTest is Test {
 }
 
 // Added for token storage tests
-import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import "../src/MiniSafeTokenStorageUpgradeable.sol";
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {MiniSafeTokenStorageUpgradeable} from "../src/MiniSafeTokenStorageUpgradeable.sol";
 
 // Mock ERC20 token for testing
 contract MockERC20 is ERC20 {

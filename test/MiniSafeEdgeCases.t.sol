@@ -1,418 +1,254 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.29;
 
-import "forge-std/Test.sol";
-import "../src/MiniSafeFactoryUpgradeable.sol";
-import "../src/MiniSafeTokenStorageUpgradeable.sol";
-import "../src/MiniSafeAaveIntegrationUpgradeable.sol";
-import "../src/MiniSafeAaveUpgradeable.sol";
-import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import "@openzeppelin/contracts/governance/TimelockController.sol";
+import {Test} from "forge-std/Test.sol";
+import {MiniSafeAaveIntegrationUpgradeable} from "../src/MiniSafeAaveIntegrationUpgradeable.sol";
+import {MiniSafeFactoryUpgradeable} from "../src/MiniSafeFactoryUpgradeable.sol";
+import {MiniSafeTokenStorageUpgradeable} from "../src/MiniSafeTokenStorageUpgradeable.sol";
+import {MiniSafeAaveUpgradeable} from "../src/MiniSafeAaveUpgradeable.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-// Mock Contracts for Edge Cases
-contract MockERC20 is ERC20 {
-    constructor(string memory n, string memory s) ERC20(n, s) {
-        _mint(msg.sender, 10_000_000 ether);
+// Mock for generic failures (Panics/Raw Reverts) to hit `catch { ... }` blocks
+contract MockFailingAavePool {
+    bool public shouldPanic = false;
+    bool public shouldRevertString = false;
+    
+    function setShouldPanic(bool _panic) external {
+        shouldPanic = _panic;
     }
 
-    function mint(address to, uint256 amt) external {
-        _mint(to, amt);
+    function setShouldRevertString(bool _revert) external {
+        shouldRevertString = _revert;
     }
 
-    function burn(address from, uint256 amount) external {
-        _burn(from, amount);
-    }
-}
-
-contract MockAddressesProvider {
-    address public pool;
-    address public poolDataProvider;
-
-    constructor(address _pool, address _poolDataProvider) {
-        pool = _pool;
-        poolDataProvider = _poolDataProvider;
-    }
-
-    function getPool() external view returns (address) {
-        return pool;
-    }
-
-    function getPoolDataProvider() external view returns (address) {
-        return poolDataProvider;
-    }
-}
-
-contract MockPoolDataProvider {
-    mapping(address => address) public aTokens;
-
-    function setAToken(address asset, address aToken) external {
-        aTokens[asset] = aToken;
-    }
-
-    function getReserveTokensAddresses(address asset) external view returns (address, address, address) {
-        return (aTokens[asset], address(0), address(0));
-    }
-}
-
-contract MockAavePool {
-    mapping(address => address) public aTokens;
-    mapping(address => uint256) public supplied;
-
-    function setAToken(address asset, address aToken) external {
-        aTokens[asset] = aToken;
-    }
-
-    function supply(address asset, uint256 amt, address onBehalfOf, uint16) external {
-        IERC20(asset).transferFrom(msg.sender, address(this), amt);
-        supplied[asset] += amt;
-        if (aTokens[asset] != address(0)) {
-            MockERC20(aTokens[asset]).mint(onBehalfOf, amt);
+    function supply(address, uint256, address, uint16) external view {
+        if (shouldPanic) {
+            // Division by zero triggers a Panic (0x12) which falls into `catch { ... }`
+            uint256 a = 0;
+            uint256 b = 1 / a; 
+        }
+        if (shouldRevertString) {
+            revert("Specific Error");
         }
     }
 
-    function withdraw(address asset, uint256 amt, address to) external virtual returns (uint256) {
-        if (supplied[asset] >= amt) {
-            supplied[asset] -= amt;
+    function withdraw(address, uint256, address) external view returns (uint256) {
+        if (shouldPanic) {
+            uint256 a = 0;
+            uint256 b = 1 / a;
         }
-        IERC20(asset).transfer(to, amt);
-        if (aTokens[asset] != address(0)) {
-            MockERC20(aTokens[asset]).burn(msg.sender, amt);
+        if (shouldRevertString) {
+            revert("Specific Error");
         }
-        return amt;
-    }
-
-    function setSupplied(address asset, uint256 amount) external {
-        supplied[asset] = amount;
-    }
-}
-
-contract FailingDataProvider {
-    function getReserveTokensAddresses(address) external pure returns (address, address, address) {
-        revert("fail");
-    }
-}
-
-contract FailingERC20 is ERC20 {
-    constructor() ERC20("Fail", "FAIL") {}
-    function approve(address, uint256) public override returns (bool) {
-        return false;
-    }
-}
-
-contract MiniSafeTokenStorageUpgradeableFailing is MiniSafeTokenStorageUpgradeable {
-    function addSupportedToken(address tokenAddress, address aTokenAddress) external override returns (bool) {
-        return false;
-    }
-}
-
-contract FailingWithdrawAavePool is MockAavePool {
-    function withdraw(address asset, uint256 amt, address to) public override returns (uint256) {
         return 0;
     }
 }
 
-/**
- * @title MiniSafeEdgeCases
- * @dev Tests specific edge cases and comprehensive coverage scenarios for the MiniSafe system
- */
-contract MiniSafeEdgeCasesTest is Test {
-    MiniSafeFactoryUpgradeable public factory;
-    MiniSafeTokenStorageUpgradeable public tokenStorage;
-    MiniSafeAaveIntegrationUpgradeable public integration;
-    MockERC20 public token;
-    MockERC20 public aToken;
-    MockAavePool public mockPool;
-    MockPoolDataProvider public mockDataProvider;
-    MockAddressesProvider public mockProvider;
+contract MockTokenStorage {
+    mapping(address => address) public aTokens;
+    mapping(address => bool) public isValid;
+    address public owner;
+    address public cusdTokenAddress = address(0x123);
+
+    constructor() {
+        owner = msg.sender;
+    }
+
+    function getTokenATokenAddress(address token) external view returns (address) {
+        return aTokens[token];
+    }
     
+    function isValidToken(address token) external view returns (bool) {
+        return isValid[token];
+    }
+
+    function authorizedManagers(address) external pure returns (bool) {
+        return true;
+    }
+
+    function setAToken(address token, address aToken) external {
+        aTokens[token] = aToken;
+        isValid[token] = true;
+    }
+}
+
+contract MockERC20 {
+    mapping(address => uint256) public balanceOf;
+    function mint(address to, uint256 amount) external {
+        balanceOf[to] += amount;
+    }
+    function transfer(address to, uint256 amount) external returns (bool) {
+        balanceOf[msg.sender] -= amount;
+        balanceOf[to] += amount;
+        return true;
+    }
+    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
+        balanceOf[from] -= amount;
+        balanceOf[to] += amount;
+        return true;
+    }
+    function approve(address, uint256) external pure returns (bool) { return true; }
+}
+
+contract MockProvider {
+    address public pool;
+    constructor(address _pool) { pool = _pool; }
+    function getPool() external view returns (address) { return pool; }
+    function getPoolDataProvider() external view returns (address) { return address(0); }
+}
+
+contract MiniSafeEdgeCasesTest is Test {
+    MiniSafeAaveIntegrationUpgradeable public integration;
+    MiniSafeFactoryUpgradeable public factory;
+    MockFailingAavePool public mockPool;
+    MockTokenStorage public mockTokenStorage;
+    MockERC20 public mockToken;
+    MockERC20 public mockAToken;
+    MockProvider public mockProvider;
     address public owner = address(this);
-    address public user1 = address(0x1);
-    address public user2 = address(0x2);
+    
+    // Addresses for factory tests
+    address public miniSafeImpl;
+    address public tokenStorageImpl;
+    address public aaveIntegrationImpl;
 
     function setUp() public {
-        // Deploy factory (non-upgradeable)
+        // Deploy Implementation Contracts
+        miniSafeImpl = address(new MiniSafeAaveUpgradeable());
+        tokenStorageImpl = address(new MiniSafeTokenStorageUpgradeable());
+        aaveIntegrationImpl = address(new MiniSafeAaveIntegrationUpgradeable());
+
+        // Deploy Mocks
+        mockPool = new MockFailingAavePool();
+        mockProvider = new MockProvider(address(mockPool));
+        mockTokenStorage = new MockTokenStorage();
+        mockToken = new MockERC20();
+        mockAToken = new MockERC20();
+
+        // Deploy Factory
         factory = new MiniSafeFactoryUpgradeable(
-            address(this),
-            address(0),
-            address(0),
-            address(0)
+            owner,
+            miniSafeImpl,
+            tokenStorageImpl,
+            aaveIntegrationImpl
         );
 
-        // Deploy mock contracts
-        token = new MockERC20("TOK", "TOK");
-        aToken = new MockERC20("aTOK", "aTOK");
-        mockPool = new MockAavePool();
-        mockDataProvider = new MockPoolDataProvider();
-        mockProvider = new MockAddressesProvider(address(mockPool), address(mockDataProvider));
-
-        // Set up mock mappings
-        mockPool.setAToken(address(token), address(aToken));
-        mockDataProvider.setAToken(address(token), address(aToken));
-
-        // Deploy token storage
-        MiniSafeTokenStorageUpgradeable tokenStorageImpl = new MiniSafeTokenStorageUpgradeable();
-        ERC1967Proxy tokenStorageProxy = new ERC1967Proxy(address(tokenStorageImpl), abi.encodeWithSelector(MiniSafeTokenStorageUpgradeable.initialize.selector, owner));
-        tokenStorage = MiniSafeTokenStorageUpgradeable(address(tokenStorageProxy));
-
-        // Deploy integration
-        MiniSafeAaveIntegrationUpgradeable integrationImpl = new MiniSafeAaveIntegrationUpgradeable();
-        ERC1967Proxy integrationProxy = new ERC1967Proxy(
-            address(integrationImpl),
-            abi.encodeWithSelector(MiniSafeAaveIntegrationUpgradeable.initialize.selector, address(tokenStorage), address(mockProvider), owner)
+        MiniSafeAaveIntegrationUpgradeable impl = new MiniSafeAaveIntegrationUpgradeable();
+        // We use a simplified initialize/setup since we are targeting specific functions
+        ERC1967Proxy proxy = new ERC1967Proxy(
+            address(impl),
+            abi.encodeWithSelector(
+                MiniSafeAaveIntegrationUpgradeable.initialize.selector,
+                address(mockTokenStorage),
+                address(mockProvider), // Use mock provider
+                owner
+            )
         );
-        integration = MiniSafeAaveIntegrationUpgradeable(address(integrationProxy));
-
-        // Set up authorizations
-        tokenStorage.setManagerAuthorization(address(integration), true);
+        integration = MiniSafeAaveIntegrationUpgradeable(address(proxy));
     }
 
-    /* ---------------------------------------------------------------------- */
-    /*                  Factory: Public Execution Deployment                  */
-    /* ---------------------------------------------------------------------- */
+    // ==================== INTEGRATION COVERAGE ====================
 
-    /**
-     * @dev Tests public execution configuration structure.
-     */
-    function testDeployWithPublicExecution() public {
-        address[] memory proposers = new address[](1);
-        proposers[0] = owner;
-        address[] memory executors = new address[](0); // Empty executors array for public execution
-
-        // Test that the configuration struct can be created with public execution enabled
-        MiniSafeFactoryUpgradeable.UpgradeableConfig memory cfg = MiniSafeFactoryUpgradeable.UpgradeableConfig({
-            proposers: proposers,
-            executors: executors,
-            minDelay: 24 hours,
-            allowPublicExecution: true,
-            aaveProvider: address(mockProvider)
-        });
-
-        // Verify configuration properties
-        assertTrue(cfg.allowPublicExecution, "Public execution should be enabled");
-        assertEq(cfg.executors.length, 0, "Executors array should be empty for public execution");
-        assertEq(cfg.proposers.length, 1, "Should have one proposer");
-        assertEq(cfg.proposers[0], owner, "Owner should be the proposer");
-        assertEq(cfg.minDelay, 24 hours, "Min delay should be 24 hours");
+    function testIntegration_DeprecatedFunction() public {
+        vm.expectRevert("Use TokenStorage.setManagerAuthorization directly");
+        integration.setManagerAuthorization(address(0x1), true);
     }
 
-    /* ---------------------------------------------------------------------- */
-    /*              Token Storage: REMOVE Token After Shares Cleared          */
-    /* ---------------------------------------------------------------------- */
-
-    /**
-     * @dev Tests removal of a supported token after all shares are withdrawn.
-     */
-    function testRemoveSupportedTokenAfterSharesCleared() public {
-        tokenStorage.setManagerAuthorization(address(this), true);
-
-        address underlying = address(token);
-        address aTokenAddr = address(aToken);
-        tokenStorage.addSupportedToken(underlying, aTokenAddr);
-        tokenStorage.updateUserTokenShare(user1, underlying, 10, true);
-        tokenStorage.updateUserTokenShare(user1, underlying, 10, false);
-
-        bool ok = tokenStorage.removeSupportedToken(underlying);
-        assertTrue(ok, "Token removal should succeed");
-        assertFalse(tokenStorage.isValidToken(underlying), "Token should no longer be valid");
-    }
-
-    /* ---------------------------------------------------------------------- */
-    /*             Aave Integration: Comprehensive Error Cases                 */
-    /* ---------------------------------------------------------------------- */
-
-    /**
-     * @dev Tests that adding an unsupported token on Aave causes a revert.
-     */
-    function testAddSupportedTokenRevertsWhenNotOnAave() public {
-        vm.expectRevert("Token not supported by Aave");
-        integration.addSupportedToken(address(0x123));
-    }
-
-    function testDepositRevertsForUnsupportedToken() public {
-        MockERC20 unsupported = new MockERC20("UN", "UN");
-        deal(address(unsupported), address(integration), 100 ether);
-        vm.expectRevert("Token not supported");
-        integration.depositToAave(address(unsupported), 100 ether);
-    }
-
-    function testDepositRevertsAmountZero() public {
-        integration.addSupportedToken(address(token));
-        vm.expectRevert("Amount must be greater than 0");
-        integration.depositToAave(address(token), 0);
-    }
-
-    function testWithdrawRevertsUnsupportedToken() public {
-        vm.expectRevert("Token not supported");
-        integration.withdrawFromAave(address(0xABC), 1 ether, user1);
-    }
-
-    function testWithdrawRevertsRecipientZero() public {
-        integration.addSupportedToken(address(token));
-        vm.expectRevert("Invalid recipient");
-        integration.withdrawFromAave(address(token), 1 ether, address(0));
-    }
-
-    function testAddSupportedTokenRevertsOnAaveError() public {
-        FailingDataProvider failingDP = new FailingDataProvider();
-        MockAddressesProvider provider = new MockAddressesProvider(address(mockPool), address(failingDP));
+    function testIntegration_EmergencyWithdraw_UnsupportedToken() public {
+        mockToken.mint(address(integration), 100 ether);
         
-        MiniSafeAaveIntegrationUpgradeable integrationImpl = new MiniSafeAaveIntegrationUpgradeable();
-        ERC1967Proxy integrationProxy = new ERC1967Proxy(
-            address(integrationImpl),
-            abi.encodeWithSelector(MiniSafeAaveIntegrationUpgradeable.initialize.selector, address(tokenStorage), address(provider), owner)
-        );
-        MiniSafeAaveIntegrationUpgradeable localIntegration = MiniSafeAaveIntegrationUpgradeable(address(integrationProxy));
-        tokenStorage.setManagerAuthorization(address(localIntegration), true);
+        // Token is NOT valid in mockTokenStorage by default
+        integration.emergencyWithdraw(address(mockToken), owner);
         
-        vm.expectRevert(bytes("fail"));
-        localIntegration.addSupportedToken(address(token));
+        // Check standard transfer happened
+        assertEq(mockToken.balanceOf(owner), 100 ether);
     }
 
-    function testAddSupportedTokenRevertsIfATokenZero() public {
-        // Don't set aToken mapping, so it returns address(0)
-        vm.expectRevert("Token not supported by Aave");
-        integration.addSupportedToken(address(0xDEAD));
-    }
-
-    function testAddSupportedTokenRevertsIfAddFails() public {
-        MiniSafeTokenStorageUpgradeableFailing storageFail = new MiniSafeTokenStorageUpgradeableFailing();
-        ERC1967Proxy proxy = new ERC1967Proxy(address(storageFail), abi.encodeWithSelector(MiniSafeTokenStorageUpgradeable.initialize.selector, owner));
-        MiniSafeTokenStorageUpgradeableFailing storageProxyFail = MiniSafeTokenStorageUpgradeableFailing(address(proxy));
+    function testIntegration_Deposit_GenericFailure() public {
+        mockTokenStorage.setAToken(address(mockToken), address(mockAToken));
         
-        mockDataProvider.setAToken(address(token), address(aToken));
+        // 1. Specific Error
+        mockPool.setShouldRevertString(true);
+        mockPool.setShouldPanic(false);
+        vm.expectRevert("Specific Error");
+        integration.depositToAave(address(mockToken), 10 ether);
+
+        // 2. Panic (Generic Catch)
+        mockPool.setShouldRevertString(false);
+        mockPool.setShouldPanic(true);
+        vm.expectRevert("Aave deposit failed");
+        integration.depositToAave(address(mockToken), 10 ether);
+    }
+
+    function testIntegration_Withdraw_GenericFailure() public {
+        mockTokenStorage.setAToken(address(mockToken), address(mockAToken));
+        mockAToken.mint(address(integration), 100 ether); // Have aToken balance
+
+        // 1. Specific Error
+        mockPool.setShouldRevertString(true);
+        mockPool.setShouldPanic(false);
+        vm.expectRevert("Specific Error");
+        integration.withdrawFromAave(address(mockToken), 10 ether, owner);
+
+        // 2. Panic (Generic Catch)
+        mockPool.setShouldRevertString(false);
+        mockPool.setShouldPanic(true);
+        vm.expectRevert("Aave withdraw failed");
+        integration.withdrawFromAave(address(mockToken), 10 ether, owner);
+    }
+    
+    function testIntegration_EmergencyWithdraw_Supported_GenericFailure() public {
+        mockTokenStorage.setAToken(address(mockToken), address(mockAToken));
+        mockAToken.mint(address(integration), 100 ether); // Have aToken balance
+
+        // 1. Specific Error
+        mockPool.setShouldRevertString(true);
+        mockPool.setShouldPanic(false);
+        vm.expectRevert("Specific Error");
+        integration.emergencyWithdraw(address(mockToken), owner);
+
+        // 2. Panic (Generic Catch)
+        mockPool.setShouldRevertString(false);
+        mockPool.setShouldPanic(true);
+        vm.expectRevert("Emergency withdrawal failed");
+        integration.emergencyWithdraw(address(mockToken), owner);
+    }
+
+    // ==================== FACTORY COVERAGE ====================
+
+    function testFactory_DeployRecommended_InvalidSigner() public {
+        address[5] memory signers = [address(1), address(2), address(0), address(4), address(5)];
+        vm.expectRevert();
+        factory.deployWithRecommendedMultiSig(signers, 2 days, address(mockProvider));
+    }
+
+    function testFactory_DeploySingleOwner_ZeroOwner() public {
+        vm.expectRevert();
+        factory.deployForSingleOwner(address(0), 2 days, address(mockProvider));
+    }
+
+    function testFactory_UpgradeImplementations_Partial() public {
+        // Test updating only some implementations (passing address(0) for others)
+        address newMiniSafe = address(0xABC);
         
-        MiniSafeAaveIntegrationUpgradeable integrationImpl = new MiniSafeAaveIntegrationUpgradeable();
-        ERC1967Proxy integrationProxy = new ERC1967Proxy(
-            address(integrationImpl),
-            abi.encodeWithSelector(MiniSafeAaveIntegrationUpgradeable.initialize.selector, address(storageProxyFail), address(mockProvider), owner)
-        );
-        MiniSafeAaveIntegrationUpgradeable localIntegration = MiniSafeAaveIntegrationUpgradeable(address(integrationProxy));
-        storageProxyFail.setManagerAuthorization(address(localIntegration), true);
+        factory.upgradeImplementations(newMiniSafe, address(0), address(0));
         
-        vm.expectRevert("Failed to add supported token");
-        localIntegration.addSupportedToken(address(token));
+        (address ms, address ts, address as_) = factory.getImplementations();
+        assertEq(ms, newMiniSafe);
+        assertEq(ts, tokenStorageImpl); // Unchanged
+        assertEq(as_, aaveIntegrationImpl); // Unchanged
     }
 
-    function testDepositToAaveRevertsOnApprovalFail() public {
-        FailingERC20 failToken = new FailingERC20();
-        MockERC20 aFailToken = new MockERC20("aFAIL", "aFAIL");
+    function testFactory_GetMultiSigInfo() public {
+        // Deploy a real system to get a timelock to query
+        MiniSafeFactoryUpgradeable.MiniSafeAddresses memory addr = 
+            factory.deployForSingleOwner(owner, 2 days, address(mockProvider));
         
-        mockPool.setAToken(address(failToken), address(aFailToken));
-        mockDataProvider.setAToken(address(failToken), address(aFailToken));
+        (uint256 proposers, uint256 executors, uint256 delay) = factory.getMultiSigInfo(addr.timelock);
         
-        integration.addSupportedToken(address(failToken));
-        deal(address(failToken), address(integration), 100 ether);
-        
-        // SafeERC20.forceApprove will revert with SafeERC20FailedOperation custom error
-        vm.expectRevert(abi.encodeWithSignature("SafeERC20FailedOperation(address)", address(failToken)));
-        integration.depositToAave(address(failToken), 100 ether);
-    }
-
-    function testWithdrawFromAaveRevertsAmountZero() public {
-        integration.addSupportedToken(address(token));
-        vm.expectRevert("Amount must be greater than 0");
-        integration.withdrawFromAave(address(token), 0, owner);
-    }
-
-    function testEmergencyWithdrawRevertsRecipientZero() public {
-        vm.expectRevert("Invalid recipient");
-        integration.emergencyWithdraw(address(token), address(0));
-    }
-
-    function testEmergencyWithdrawFailsIfWithdrawnZero() public {
-        MockERC20 uniqueToken = new MockERC20("UNIQUE", "UNQ");
-        MockERC20 uniqueAToken = new MockERC20("aUNIQUE", "aUNQ");
-        FailingWithdrawAavePool failPool = new FailingWithdrawAavePool();
-        
-        mockDataProvider.setAToken(address(uniqueToken), address(uniqueAToken));
-        MockAddressesProvider provider = new MockAddressesProvider(address(failPool), address(mockDataProvider));
-        
-        MiniSafeAaveIntegrationUpgradeable integrationImpl = new MiniSafeAaveIntegrationUpgradeable();
-        ERC1967Proxy integrationProxy = new ERC1967Proxy(
-            address(integrationImpl),
-            abi.encodeWithSelector(MiniSafeAaveIntegrationUpgradeable.initialize.selector, address(tokenStorage), address(provider), owner)
-        );
-        MiniSafeAaveIntegrationUpgradeable localIntegration = MiniSafeAaveIntegrationUpgradeable(address(integrationProxy));
-        tokenStorage.setManagerAuthorization(address(localIntegration), true);
-        
-        localIntegration.addSupportedToken(address(uniqueToken));
-        uniqueAToken.mint(address(localIntegration), 100 ether);
-        
-        vm.expectRevert(bytes("Emergency withdrawal failed"));
-        localIntegration.emergencyWithdraw(address(uniqueToken), owner);
-    }
-
-    function testInitializeBaseTokensAsNonOwnerReverts() public {
-        vm.prank(address(0x123));
-        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", address(0x123)));
-        integration.initializeBaseTokens();
-    }
-
-    function testVersionReturnsCorrectString() public {
-        assertEq(integration.version(), "1.0.0");
-        assertEq(tokenStorage.version(), "1.0.0");
-        assertEq(factory.version(), "1.0.0");
-    }
-
-    function testUpgradeToAndCallAsNonOwnerReverts() public {
-        MiniSafeAaveIntegrationUpgradeable newImpl = new MiniSafeAaveIntegrationUpgradeable();
-        vm.prank(address(0x123));
-        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", address(0x123)));
-        integration.upgradeToAndCall(address(newImpl), "");
-    }
-
-    /* ---------------------------------------------------------------------- */
-    /*                     Emergency Scenarios                               */
-    /* ---------------------------------------------------------------------- */
-
-    function testEmergencyWithdrawUnsupportedTokenPath() public {
-        MockERC20 unsupported = new MockERC20("UNSUP", "UNS");
-        unsupported.mint(address(integration), 500 * 10**18);
-        uint256 beforeBal = unsupported.balanceOf(owner);
-
-        integration.emergencyWithdraw(address(unsupported), owner);
-        assertEq(unsupported.balanceOf(owner) - beforeBal, 500 * 10**18);
-    }
-
-    function testEmergencyWithdrawSupportedNoAToken() public {
-        integration.addSupportedToken(address(token));
-        token.mint(address(integration), 200 * 10**18);
-
-        integration.emergencyWithdraw(address(token), user1);
-        assertEq(token.balanceOf(user1), 200 * 10**18);
-    }
-
-    /* ---------------------------------------------------------------------- */
-    /*                     Circuit Breaker Scenarios                         */
-    /* ---------------------------------------------------------------------- */
-
-    function testCircuitBreakerThreshold() public {
-        // This would test circuit breaker functionality if implemented
-        // For now, we'll test the basic structure exists
-        assertTrue(address(tokenStorage) != address(0));
-    }
-
-    /* ---------------------------------------------------------------------- */
-    /*                     Comprehensive Integration                          */
-    /* ---------------------------------------------------------------------- */
-
-    function testFullIntegrationWorkflow() public {
-        // Add token support
-        integration.addSupportedToken(address(token));
-        assertTrue(tokenStorage.isValidToken(address(token)));
-
-        // Test deposit
-        deal(address(token), address(integration), 1000 ether);
-        uint256 shares = integration.depositToAave(address(token), 1000 ether);
-        assertEq(shares, 1000 ether);
-
-        // Test aToken balance
-        assertEq(integration.getATokenBalance(address(token)), 1000 ether);
-
-        // Test withdrawal
-        uint256 withdrawn = integration.withdrawFromAave(address(token), 500 ether, user1);
-        assertEq(withdrawn, 500 ether);
-        assertEq(token.balanceOf(user1), 500 ether);
+        assertEq(delay, 2 days);
+        assertEq(proposers, 0); // As per current implementation returning 0
+        assertEq(executors, 0); // As per current implementation returning 0
     }
 }

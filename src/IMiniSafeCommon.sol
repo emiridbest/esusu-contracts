@@ -38,4 +38,5 @@ interface IMiniSafeCommon {
     event DepositedToAave(address indexed token, uint256 amount);
     event WithdrawnFromAave(address indexed token, uint256 amount);
     event AavePoolUpdated(address indexed newPool);
+    event PoolDataProviderUpdated(address indexed newDataProvider); // L-1 Fix: Separate event
 }
