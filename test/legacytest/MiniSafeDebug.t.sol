@@ -50,5 +50,6 @@ contract MiniSafeDebug is MiniSafeUserIsolationTest {
         console.log("Total Random Token Deposited:", totalRandom);
         
         vm.stopPrank();
+        assertTrue(false, "Forced failure to show logs");
     }
 }
