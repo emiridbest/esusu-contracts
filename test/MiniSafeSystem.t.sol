@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.29;
 
-import "forge-std/Test.sol";
-import "../src/MiniSafeFactoryUpgradeable.sol";
-import "../src/MiniSafeAaveUpgradeable.sol";
-import "../src/MiniSafeAaveIntegrationUpgradeable.sol";
-import "@openzeppelin/contracts/governance/TimelockController.sol";
-import "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
-import "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
-import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {Test} from "forge-std/Test.sol";
+import {MiniSafeFactoryUpgradeable} from "../src/MiniSafeFactoryUpgradeable.sol";
+import {MiniSafeAaveUpgradeable} from "../src/MiniSafeAaveUpgradeable.sol";
+import {MiniSafeAaveIntegrationUpgradeable} from "../src/MiniSafeAaveIntegrationUpgradeable.sol";
+import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
+import {ProxyAdmin} from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
+
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
 // Mock Aave Provider for testing
 contract MockAaveProvider {
@@ -35,7 +35,7 @@ contract MiniSafeFactoryUpgradeableTest is Test {
     address public executor1 = address(0x4);
     address public executor2 = address(0x5);
     
-    uint256 public constant MIN_DELAY = 24 hours;
+    uint256 public constant MIN_DELAY = 48 hours;
     uint256 public constant MAX_DELAY = 7 days;
 
     event ImplementationsDeployed(address miniSafeImpl, address tokenStorageImpl, address aaveIntegrationImpl);
@@ -109,7 +109,7 @@ contract MiniSafeFactoryUpgradeableTest is Test {
             executors: executors,
             minDelay: MIN_DELAY,
             allowPublicExecution: false,
-            aaveProvider: address(0)
+            aaveProvider: address(0x9F7Cf9417D5251C59fE94fB9147feEe1aAd9Cea5) // L-4: Must provide explicit provider
         });
 
         MiniSafeFactoryUpgradeable.MiniSafeAddresses memory addresses = factory.deployUpgradeableMiniSafe(config);
@@ -129,7 +129,7 @@ contract MiniSafeFactoryUpgradeableTest is Test {
 
     function testDeployWithRecommendedMultiSig() public {
         address[5] memory signers = [address(0x101), address(0x102), address(0x103), address(0x104), address(0x105)];
-        MiniSafeFactoryUpgradeable.MiniSafeAddresses memory addresses = factory.deployWithRecommendedMultiSig(signers, MIN_DELAY, address(0));
+        MiniSafeFactoryUpgradeable.MiniSafeAddresses memory addresses = factory.deployWithRecommendedMultiSig(signers, MIN_DELAY, address(0x9F7Cf9417D5251C59fE94fB9147feEe1aAd9Cea5));
         
         assertTrue(addresses.miniSafe != address(0));
         TimelockController timelock = TimelockController(payable(addresses.timelock));
@@ -143,7 +143,7 @@ contract MiniSafeFactoryUpgradeableTest is Test {
 
     function testDeployForSingleOwner() public {
         address singleOwner = address(0x999);
-        MiniSafeFactoryUpgradeable.MiniSafeAddresses memory addresses = factory.deployForSingleOwner(singleOwner, MIN_DELAY, address(0));
+        MiniSafeFactoryUpgradeable.MiniSafeAddresses memory addresses = factory.deployForSingleOwner(singleOwner, MIN_DELAY, address(0x9F7Cf9417D5251C59fE94fB9147feEe1aAd9Cea5));
         
         assertTrue(addresses.miniSafe != address(0));
         TimelockController timelock = TimelockController(payable(addresses.timelock));
@@ -230,7 +230,7 @@ contract MiniSafeAaveIntegrationUpgradeableTest is Test {
     }
 
     function testVersion() public {
-        assertEq(integration.version(), "1.0.0");
+        assertEq(integration.version(), "1.0.1");
     }
 
     function testInitialize() public {
@@ -247,11 +247,13 @@ contract MiniSafeAaveIntegrationUpgradeableTest is Test {
             abi.encode(address(0x2000), address(0), address(0))
         );
         
-        // Test with authorized manager (owner) - should succeed
+        // M-5 Fix: cUSD is now initialized during TokenStorage.initialize()
+        // So calling initializeBaseTokens will revert with "Token already supported"
         vm.prank(owner);
+        vm.expectRevert("Token already supported");
         integration.initializeBaseTokens();
 
-        // Test with unauthorized manager - should fail
+        // Test with unauthorized manager - should fail with OwnableUnauthorizedAccount
         vm.prank(address(0x1234));
         vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", address(0x1234)));
         integration.initializeBaseTokens();
@@ -267,13 +269,13 @@ contract MiniSafeAaveIntegrationUpgradeableTest is Test {
         integration.upgradeToAndCall(address(newImpl), "");
 
         // Verify upgrade by checking version
-        assertEq(integration.version(), "1.0.0");
+        assertEq(integration.version(), "1.0.1");
     }
 }
 
 // Added for token storage tests
-import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import "../src/MiniSafeTokenStorageUpgradeable.sol";
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {MiniSafeTokenStorageUpgradeable} from "../src/MiniSafeTokenStorageUpgradeable.sol";
 
 // Mock ERC20 token for testing
 contract MockERC20 is ERC20 {
@@ -434,6 +436,6 @@ contract MiniSafeTokenStorageUpgradeableTest is Test {
     }
 
     function testVersion() public {
-        assertEq(tokenStorage.version(), "1.0.0");
+        assertEq(tokenStorage.version(), "1.0.1");
     }
 }

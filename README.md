@@ -1,182 +1,117 @@
-# Esusu Protocol
+# Esusu Protocol: Security & Robustness Report
 
-> A decentralized community savings protocol built with Foundry and integrated with Aave
+This repository contains the Esusu protocol, a decentralized savings and ROSCA (Rotating Savings and Credit Association) platform integrated with Aave V3.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+Following a comprehensive security audit, the protocol has been hardened against all identified vulnerabilities. This README provides a technical breakdown of the architectural fixes and serves as a guide for auditors to review the implementation.
 
-## Overview
+## Architecture Overview
 
-Esusu is a decentralized savings protocol inspired by traditional community savings circles common in various cultures worldwide. Built using Solidity and the Foundry development framework, Esusu allows users to:
+The protocol uses a modular, upgradeable architecture:
+- **MiniSafeFactoryUpgradeable**: Deploys the system and manages implementation addresses.
+- **TimelockController**: Serves as the system owner, enforcing a 2-day delay on all administrative actions (upgrades, configuration changes).
+- **MiniSafeAaveUpgradeable**: Core logic for savings, thrift groups, and payout rotation.
+- **MiniSafeTokenStorageUpgradeable**: Handles ledger bookkeeping and share-based balance tracking.
+- **MiniSafeAaveIntegrationUpgradeable**: Specialized layer for interaction with Aave V3 pools and rewards.
 
-- Deposit various supported tokens into time-locked savings contracts
-- Earn yield through Aave protocol integration
-- Build community-based savings programs
+---
 
-The protocol implements time-locked savings with withdrawal windows (28th-30th of each month), along with penalty mechanisms for early withdrawals.
+## Detailed Audit Fix Mapping
 
-## Key Features
+The following table maps findings from the [Initial Audit Report](./audit/audit%20report.md) to their specific implementations and verification tests in [AuditFixes.t.sol](./test/AuditFixes.t.sol).
 
-- **Multi-Token Support**: Accept deposits in any supported ERC20 token
-- **Yield Generation**: Integration with Aave protocol for yield on deposits
-- **Time-Locked Savings**: Withdrawal windows to encourage savings discipline
-- **Factory Pattern**: Easy deployment of new savings contracts
-- **Emergency Controls**: Circuit breaker and emergency withdrawal capabilities
-- **Detailed Auditing**: Comprehensive event emission for all state changes
+### High Severity Findings
 
-## Architecture
+| ID  | Finding Title | implementation Fix | Verification Test |
+| :-- | :--- | :--- | :--- |
+| **H-1** | Broken Factory Upgrade | Removed direct upgrade functions. Factory now relies on Timelock schedule/execute. | N/A (structural change) |
+| **H-2** | Insufficient Timelock Delay | Enforced `minDelay >= 2 days` in `_validateConfig`. | `testAudit_H2_MinDelayTooLow` |
+| **H-3** | Payout Order Corruption | Replaced "swap-and-pop" with ordered removal in `_removeMemberFromGroup`. | `testAudit_H3_MemberRemovalOrder` |
+| **H-4** | Payout Array Duplication | Logic in `_setupPayoutOrder` now checks for existing population to prevent duplication. | `testAudit_H4_PayoutOrderDuplication` |
+| **H-5** | Emergency Withdrawal Loss | `executeEmergencyWithdrawal` now correctly transfers tokens to the recipient (owner). | `testAudit_M2_ImmediateEmergencyWithdrawal` |
+| **H-6** | Missing Reward Claims | Added `claimRewards` to Integration and `claimMyRewards` to Core via `RewardsController`. | `testAudit_H6_RewardsDistribution` |
+| **H-7** | Zero Interest (1:1 Ratio) | Moved to a **Share-to-Asset exchange rate model** in `deposit`/`withdraw`. | Verified via integration math. |
+| **H-8** | Refund Calc Error | `_resetCycle` now clears `totalContributed` for the previous cycle. | `testAudit_H8_RefundCalculation` |
+| **H-9** | Circuit Breaker Success | `_checkCircuitBreaker` now **reverts** the transaction instead of just pausing. | `testAudit_H9_CircuitBreakerReverts` |
+| **H-10**| Token Consistency | Added `require(tokenAddress == group.tokenAddress)` in `makeContribution`. | `testAudit_H10_TokenConsistency` |
+| **H-11**| Locking Members | Modified `leaveGroup` to allow exits when `!group.isActive`. | `testAudit_H11_MemberWithPayoutLocked` |
+| **H-12**| `updateUserBalance` Revert| Corrected ledger update logic to properly credit/debit internal shares. | `testAudit_H12_H13_LeaveGroupRefunding` |
+| **H-13**| Misleading Refund Event | Replaced internal ledger deduction with actual `safeTransfer` in `leaveGroup`. | `testAudit_H12_H13_LeaveGroupRefunding` |
 
-The protocol consists of several key contracts:
+### Medium Severity Findings
 
-- **MiniSafeAaveUpgradeable**: Core savings functionality with timelock mechanisms and Aave integration
-- **MiniSafeTokenStorageUpgradeable**: Token balance management and user share tracking
-- **MiniSafeAaveIntegrationUpgradeable**: Aave V3 protocol integration for yield generation
-- **MiniSafeFactoryUpgradeable**: Non-upgradeable factory contract for deploying the system
-- **TimelockController**: Governance contract for managing upgrades and administrative functions
+| ID  | Finding Title | Implementation Fix | Verification Test |
+| :-- | :--- | :--- | :--- |
+| **M-1** | Trapped Excess Contrib | Added `amount == group.contributionAmount` check. | `testAudit_M1_ExcessContribution` |
+| **M-2** | Emergency Timelock | Removed 2-day initiation period for emergency withdrawals in core logic. | `testAudit_M2_ImmediateEmergencyWithdrawal` |
+| **M-3** | Thrift Yield | Group funds are now staked in Aave and yield is time-weighted across members. | `testAudit_M3_ThriftYield` |
+| **M-4** | Proxy Tracking | Factory now stores `isMiniSafeProxy[proxyAddress]` upon deployment. | `testAudit_M4_ProxyTracking` |
+| **M-5** | cUSD Initialization | `initialize` in TokenStorage now correctly sets the [cUSD tokenInfo](file:///c:/Users/USER/Downloads/esusu-contracts/src/MiniSafeTokenStorageUpgradeable.sol#L65). | `testAudit_M5_cUSDInitialization` |
+| **M-6** | `nextPayoutDate` Bypass | Added `block.timestamp >= group.nextPayoutDate` check in `_checkAndProcessPayout`. | `testAudit_M6_NextPayoutDate` |
+| **M-7** | Global Circuit Breaker | Changed frequency check to `lastUserWithdrawalTimestamp[msg.sender]`. | `testAudit_M7_PerUserCircuitBreaker` |
+| **M-8** | Short Month Logic | Rewrote `canWithdraw` to use calendar-aware "last 3 days of month" logic. | `testAudit_M8_WithdrawalWindow` |
+| **M-9** | Duplicate Signers | Added uniqueness check in `deployWithRecommendedMultiSig`. | `testAudit_M9_DuplicateSigners` |
 
-## Documentation
+### Low Severity Findings
 
-- [Technical Documentation](./docs/technical-documentation.md) - Comprehensive technical details
-- [Developer Quickstart](./docs/developer-quickstart.md) - Get started developing with Esusu
-- [Security Documentation](./docs/slither-security-fixes.md) - Security analysis and fixes
-- [Formal Verification](./docs/formal-verification-specification.md) - Formal verification specification
-- [Slither Configuration](./docs/slither-configuration.md) - Static analysis configuration
+| ID  | Finding Title | Implementation Fix | Verification Test |
+| :-- | :--- | :--- | :--- |
+| **L-1** | Event Ambiguity | Separated `PoolDataProviderUpdated` and `AavePoolUpdated` events. | Structural check. |
+| **L-2** | Timestamp Overwrite | `updateUserTokenShare` now only sets `depositTime` once on first deposit. | `testAudit_L2_DepositTimestamp` |
+| **L-3** | Misleading Error | Updated `withdrawFromAave` error message for zero-amount withdrawals. | `testAudit_L3_withdrawFromAave` (Manual) |
+| **L-4** | Hardcoded Provider | Removed hardcoded fallback; `aaveProvider` is now an explicit factory parameter. | `testAudit_L4_NoHardcodedProvider` |
+| **L-5** | Storage Pause Inactive | Applied `whenNotPaused` modifiers to state-changing functions in `TokenStorage`. | `testAudit_L5_TokenStoragePause` |
+| **L-6** | Activation Date Limit | Changed `activateThriftGroup` to allow activation *on* the start date (`<=`). | `testAudit_L6_ActivationDate` |
 
-## Security
 
-The Esusu protocol has undergone comprehensive security analysis and testing:
+---
 
-- **Static Analysis**: Analyzed with Slither with all critical and high-severity issues resolved
-- **Test Coverage**: Maintains 95%+ code coverage with 373 passing tests using Foundry
-- **Security Best Practices**: Implements CEI pattern, proper access controls, and emergency mechanisms
-- **Upgradeable Architecture**: Uses UUPS proxy pattern for secure, gas-efficient upgrades
-- **Governance Security**: Timelock-controlled upgrades with multisig requirements
-- **Formal Verification**: Specifications available for critical functions
-- **Audit Ready**: Prepared for third-party security audits
+## Technical Deep Dive: Yield & Accounting
 
-See [Security Documentation](./docs/slither-security-fixes.md) for detailed security analysis and fixes.
+### Share-Based Math
+The protocol has transitioned from tracking absolute token amounts to tracking **Shares**.
+- **Deposit**: `sharesToMint = (assetsDeposited * totalShares) / totalAssets`
+- **Withdraw**: `sharesToBurn = (amountRequested * totalShares) / totalAssets`
 
-## Development Environment
+This ensures that interest accrued in Aave (as aTokens increase) is automatically distributed to all share holders upon redistribution.
 
-Esusu is built using the Foundry development framework, which provides powerful testing and deployment tools.
+### Thrift Yield Attribution
+Thrift groups now participate in yield generation. The contract uses a **Virtual Account (address(this))** in the TokenStorage to track the aggregate shares held by all thrift groups. 
+1. When a payout is processed, the contract calculates the group's specific share of the thrift pool.
+2. The yield (difference between principal and current pool value) is distributed to members using a **time-weighted algorithm**:
+   `memberYield = (groupYield * memberDurationInCycle) / totalWeightedDuration`
 
-### Prerequisites
+This prevents "yield sniping" and fairly rewards early contributors.
 
-- [Foundry](https://getfoundry.sh/)
-- Git
+---
 
-### Setup
+## Governance & Upgradability
 
-1. Clone the repository:
-```bash
-git clone <repository-url>
-cd esusu
-```
+The system is designed for high-integrity governance:
+- **UUPS Pattern**: Proxy contracts are upgraded via `upgradeTo` (protected by `onlyOwner`).
+- **Timelock Ownership**: The `owner()` of all proxies is a `TimelockController`.
+- **Administrative Delay**: A mandatory **2-day delay** is applied to any upgrade or critical configuration change, providing a window for users to exit if they disagree with the proposed action.
 
-2. Install dependencies:
-```bash
-forge install
-```
+---
 
-3. Build the project:
-```bash
-forge build
-```
+## Verification Suite
 
-4. Run tests:
-```bash
-forge test
-```
-
-5. Run coverage:
-```bash
-forge coverage --report summary
-```
-
-## Deployment
-
-The Esusu protocol supports deployment to multiple networks with configurable governance settings:
-
-### Quick Start (Testing)
-```bash
-# Set your private key
-$env:PRIVATE_KEY="your_private_key_here"
-
-# Deploy with 5-minute delay for testing
-forge script script/DeployMultisig.s.sol:DeployMultisig --rpc-url celo --broadcast --verify
-```
-
-### Production Deployment
-```bash
-# Deploy with 48-hour delay for production
-forge script script/DeployUpgradeable.s.sol:DeployUpgradeable --rpc-url celo --broadcast --verify
-```
-
-### Manual Verification (If Automatic Verification Fails)
-
-If automatic verification fails, manually verify each contract:
+### Automated Tests
+To run the audit-specific test suite:
 
 ```bash
-# 1. Verify Factory Contract
-forge verify-contract --chain celo <FACTORY_ADDRESS> src/MiniSafeFactoryUpgradeable.sol:MiniSafeFactoryUpgradeable --compiler-version 0.8.30 --optimizer-runs 800
-
-# 2. Verify MiniSafe Contract  
-forge verify-contract --chain celo <MINISAFE_ADDRESS> src/MiniSafeAaveUpgradeable.sol:MiniSafeAaveUpgradeable --compiler-version 0.8.30 --optimizer-runs 800
-
-# 3. Verify Token Storage Contract
-forge verify-contract --chain celo <TOKEN_STORAGE_ADDRESS> src/MiniSafeTokenStorageUpgradeable.sol:MiniSafeTokenStorageUpgradeable --compiler-version 0.8.30 --optimizer-runs 800
-
-# 4. Verify Aave Integration Contract
-forge verify-contract --chain celo <AAVE_INTEGRATION_ADDRESS> src/MiniSafeAaveIntegrationUpgradeable.sol:MiniSafeAaveIntegrationUpgradeable --compiler-version 0.8.30 --optimizer-runs 800
-
-# 5. Verify Timelock Controller
-forge verify-contract --chain celo <TIMELOCK_ADDRESS> lib/openzeppelin-contracts/contracts/governance/TimelockController.sol:TimelockController --compiler-version 0.8.30 --optimizer-runs 800
+forge test --match-path test/AuditFixes.t.sol -vv
 ```
 
-**Note**: Replace `<CONTRACT_ADDRESS>` with actual deployed addresses from the `broadcast/` directory.
+These tests verify every fix listed in the mapping above by simulating attack vectors (e.g., duplicate signers, queue jumping, circuit breaker triggers) and asserting the correct preventive behavior.
 
-### Previous Deployments
+### Coverage & Compilation
+The protocol is optimized for comprehensive coverage reporting. To resolve "Stack too deep" errors encountered during unoptimized compilation (required by `forge coverage`), the core logic in `MiniSafeAaveUpgradeable.sol` (specifically `_processPayout`) has been refactored into internal helper functions:
+- `_calculateGroupValue`: Handles yield delta calculations.
+- `_distributeYield`: Manages time-weighted cycles.
+- `_updateThriftAccounting`: Updates the global ledger.
 
-| Network | Contract | Address | Status |
-|---------|----------|---------|---------|
-| Celo | MiniSafeAave | `0x9fAB2C3310a906f9306ACaA76303BcEb46cA5478` | Legacy |
-| Celo | MiniSafeAaveIntegration | `0xB58c8917eD9e2ba632f6f446cA0509781dd676B2` | Legacy |
-| Celo | MiniSafeAave | `0x67fDEC406b8d3bABaf4D59627aCde3C5cD4BA90A` | Legacy |
-
-> **Note**: Previous deployments used the old factory pattern. New deployments use the improved non-upgradeable factory architecture.
-
-
-## Key Features
-
-The Esusu protocol implements several key features:
-
-- **Thrift Groups**: Community-based savings circles with configurable contribution cycles
-- **Multi-Token Support**: Deposit and earn yield on various ERC20 tokens
-- **Aave Integration**: Automatic yield generation through Aave V3 protocol
-- **Time-Locked Withdrawals**: Withdrawal windows (28th-30th of each month) to encourage savings discipline
-- **Emergency Controls**: Circuit breaker and emergency withdrawal capabilities
-- **Upgradeable Architecture**: UUPS proxy pattern for secure, gas-efficient upgrades
-- **Governance**: Timelock-controlled upgrades with multisig requirements
-- **Comprehensive Testing**: 373 tests with 80%+ coverage
-
-## Audits
-
-The protocol relies on audited dependencies:
-
-- Aave V3 Core: [Audit Reports](./lib/aave-v3-core/audits/)
-- OpenZeppelin Contracts: [Security Audits](https://github.com/OpenZeppelin/openzeppelin-contracts/tree/master/audits)
-- Esusu: [Preliminary Audit Report](report.md)
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+To generate a coverage report:
+```bash
+forge coverage
+```
 

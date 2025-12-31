@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.29;
 
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-import "@openzeppelin/contracts/governance/TimelockController.sol";
-import "./MiniSafeAaveUpgradeable.sol";
-import "./MiniSafeTokenStorageUpgradeable.sol";
-import "./MiniSafeAaveIntegrationUpgradeable.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
+import {MiniSafeAaveUpgradeable} from "./MiniSafeAaveUpgradeable.sol";
+import {MiniSafeTokenStorageUpgradeable} from "./MiniSafeTokenStorageUpgradeable.sol";
+import {MiniSafeAaveIntegrationUpgradeable} from "./MiniSafeAaveIntegrationUpgradeable.sol";
 
 /**
  * @title MiniSafeFactoryUpgradeable
@@ -21,6 +21,9 @@ contract MiniSafeFactoryUpgradeable is Ownable {
     address public miniSafeImplementation;
     address public tokenStorageImplementation;
     address public aaveIntegrationImplementation;
+
+    /// @dev Mapping to track deployed MiniSafe proxies
+    mapping(address => bool) public isMiniSafeProxy;
 
     /// @dev Deployment configuration
     struct UpgradeableConfig {
@@ -56,9 +59,6 @@ contract MiniSafeFactoryUpgradeable is Ownable {
         uint256 minDelay
     );
 
-    event ContractUpgraded(address indexed contractAddress, address indexed newImplementation);
-    event BatchUpgradeCompleted(uint256 contractsUpgraded);
-
     /**
      * @dev Construct a non-upgradeable factory and set implementation addresses
      * @param _initialOwner Address of the initial owner
@@ -87,7 +87,7 @@ contract MiniSafeFactoryUpgradeable is Ownable {
      * @dev Get implementation version
      */
     function version() external pure returns (string memory) {
-        return "1.0.0";
+        return "1.0.1";
     }
 
     /**
@@ -101,7 +101,7 @@ contract MiniSafeFactoryUpgradeable is Ownable {
      */
     function _validateConfig(UpgradeableConfig memory config) internal pure {
         if (config.proposers.length == 0) revert();
-        if (!(config.minDelay >= 1 minutes && config.minDelay <= 7 days)) revert();
+        if (!(config.minDelay >= 2 days && config.minDelay <= 14 days)) revert();
         // Validate proposer addresses
         for (uint256 i = 0; i < config.proposers.length; i++) {
             if (config.proposers[i] == address(0)) revert();
@@ -174,14 +174,13 @@ contract MiniSafeFactoryUpgradeable is Ownable {
      * @return aaveIntegrationAddress Address of deployed Aave integration
      */
     function _deployAaveIntegration(address tokenStorageAddress, address timelockAddress, address aaveProvider) internal returns (address aaveIntegrationAddress) {
-        address provider = aaveProvider == address(0) 
-            ? 0x9F7Cf9417D5251C59fE94fB9147feEe1aAd9Cea5  // Default Celo Aave V3 provider
-            : aaveProvider;
+        // L-4 Fix: Removed hardcoded fallback. Require explicit provider address.
+        require(aaveProvider != address(0), "Aave provider address required");
 
         bytes memory aaveIntegrationInitData = abi.encodeWithSelector(
             MiniSafeAaveIntegrationUpgradeable.initialize.selector,
             tokenStorageAddress,
-            provider,
+            aaveProvider,
             timelockAddress
         );
         ERC1967Proxy aaveIntegrationProxy = new ERC1967Proxy(
@@ -246,6 +245,9 @@ contract MiniSafeFactoryUpgradeable is Ownable {
         addresses.aaveIntegration = _deployAaveIntegration(addresses.tokenStorage, addresses.timelock, config.aaveProvider);
         addresses.miniSafe = _deployMiniSafe(addresses.tokenStorage, addresses.aaveIntegration, addresses.timelock);
 
+        // M-4 Fix: Track deployed proxy
+        isMiniSafeProxy[addresses.miniSafe] = true;
+
         // Note: Permissions need to be set up manually by the timelock controller after deployment
         // This is done to ensure proper access control and avoid permission issues during deployment
 
@@ -267,10 +269,13 @@ contract MiniSafeFactoryUpgradeable is Ownable {
         // Validate all signers
         for (uint256 i = 0; i < 5; i++) {
             if (signers[i] == address(0)) revert();
+            for (uint256 j = i + 1; j < 5; j++) {
+                require(signers[i] != signers[j], "Duplicate signer detected");
+            }
         }
 
         // Validate delay configuration
-        if (!(minDelay >= 1 minutes && minDelay <= 7 days)) revert();
+
 
         // Create dynamic arrays from fixed array
         address[] memory proposers = new address[](5);
@@ -328,7 +333,7 @@ contract MiniSafeFactoryUpgradeable is Ownable {
         address aaveProvider
     ) external returns (MiniSafeAddresses memory addresses) {
         if (owner == address(0)) revert();
-        if (!(minDelay >= 1 minutes && minDelay <= 7 days)) revert();
+
 
         address[] memory proposers = new address[](1);
         address[] memory executors = new address[](1);
@@ -403,126 +408,8 @@ contract MiniSafeFactoryUpgradeable is Ownable {
         );
     }
 
-    /**
-     * @dev Upgrade a specific deployed contract (selective upgrade)
-     * @param contractAddress Address of the deployed proxy contract to upgrade
-     * @param newImplementation New implementation address for the contract
-     */
-    function upgradeSpecificContract(
-        address contractAddress,
-        address newImplementation,
-        bytes calldata data
-    ) external onlyOwner {
-        require(contractAddress != address(0), "Invalid contract address");
-        require(newImplementation != address(0), "Invalid implementation address");
-        
-        // Verify the contract is a known MiniSafe contract
-        bool isKnownContract = false;
-        
-        // Check if it's a MiniSafe contract
-        try this.isMiniSafeContract(contractAddress) returns (bool result) {
-            if (result) {
-                isKnownContract = true;
-            }
-        } catch {
-            // Contract call failed, not a known contract
-        }
-        
-        if (!isKnownContract) revert();
-        
-        // CEI Pattern: Emit event before external calls to prevent reentrancy
-        emit ContractUpgraded(contractAddress, newImplementation);
-        
-        bool success;
-        bytes memory returnData;
-        if (data.length == 0) {
-            // Standard upgrade
-            (success, returnData) = contractAddress.call(
-                abi.encodeWithSignature("upgradeTo(address)", newImplementation)
-            );
-        } else {
-            // Upgrade and call with data
-            (success, returnData) = contractAddress.call(
-                abi.encodeWithSignature("upgradeToAndCall(address,bytes)", newImplementation, data)
-            );
-        }
-        if (!success) revert();
-    }
-
-    /**
-     * @dev Check if an address is a known MiniSafe contract
-     * @param contractAddress Address to check
-     * @return bool Whether the address is a known MiniSafe contract
-     */
-    function isMiniSafeContract(address contractAddress) external view returns (bool) {
-        if (
-            contractAddress == miniSafeImplementation ||
-            contractAddress == tokenStorageImplementation ||
-            contractAddress == aaveIntegrationImplementation
-        ) {
-            return true;
-        }
-        return false;
-    }
-
-    /**
-     * @dev Get the current implementation address for a deployed contract
-     * @param contractAddress Address of the deployed proxy contract
-     * @return implementation Current implementation address
-     */
-    function getContractImplementation(address contractAddress) external view returns (address implementation) {
-        if (contractAddress == miniSafeImplementation) return miniSafeImplementation;
-        if (contractAddress == tokenStorageImplementation) return tokenStorageImplementation;
-        if (contractAddress == aaveIntegrationImplementation) return aaveIntegrationImplementation;
-        return address(0);
-    }
-
-    /**
-     * @dev Batch upgrade multiple contracts at once
-     * @param contractAddresses Array of contract addresses to upgrade
-     * @param newImplementations Array of new implementation addresses
-     */
-    function batchUpgradeContracts(
-        address[] calldata contractAddresses,
-        address[] calldata newImplementations
-    ) external onlyOwner {
-        if (contractAddresses.length != newImplementations.length) revert();
-        if (contractAddresses.length == 0) revert();
-        if (contractAddresses.length > 10) revert();
-        
-        // CEI Pattern: First validate all contracts before any external calls
-        for (uint256 i = 0; i < contractAddresses.length; i++) {
-            if (contractAddresses[i] == address(0)) revert();
-            if (newImplementations[i] == address(0)) revert();
-            
-            // Verify it's a known contract (this is an external call)
-            bool isKnownContract = false;
-            try this.isMiniSafeContract(contractAddresses[i]) returns (bool result) {
-                if (result) {
-                    isKnownContract = true;
-                }
-            } catch {
-                // Contract call failed
-            }
-            
-            if (!isKnownContract) revert();
-        }
-        
-        // CEI Pattern: Emit all events before performing upgrades
-        emit BatchUpgradeCompleted(contractAddresses.length);
-        for (uint256 i = 0; i < contractAddresses.length; i++) {
-            emit ContractUpgraded(contractAddresses[i], newImplementations[i]);
-        }
-        
-        // Finally, perform all upgrades
-        for (uint256 i = 0; i < contractAddresses.length; i++) {
-            // Perform the upgrade using low-level call
-            (bool success, ) = contractAddresses[i].call(
-                abi.encodeWithSignature("upgradeTo(address)", newImplementations[i])
-            );
-            if (!success) revert();
-        }
-    }
+    // NOTE: Upgrade functions removed - Factory cannot upgrade proxies because Timelock is the owner.
+    // Upgrades are performed through the TimelockController using the schedule/execute pattern.
 
     /**
      * @dev Get current implementation addresses
@@ -565,5 +452,14 @@ contract MiniSafeFactoryUpgradeable is Ownable {
         // Return 0 for counts as we cannot enumerate role members efficiently
         // Recommend using events or separate tracking for this information
         return (0, 0, minDelay);
+    }
+
+    /**
+     * @dev Check if a given address is a valid MiniSafe proxy deployed by this factory
+     * @param potentialProxy Address to check
+     * @return isValid True if the address is a valid MiniSafe proxy
+     */
+    function isMiniSafeContract(address potentialProxy) external view returns (bool) {
+        return isMiniSafeProxy[potentialProxy];
     }
 } 

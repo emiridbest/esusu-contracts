@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.29;
 
-import "forge-std/Test.sol";
-import "../src/MiniSafeAaveUpgradeable.sol";
-import "../src/MiniSafeTokenStorageUpgradeable.sol";
-import "../src/MiniSafeAaveIntegrationUpgradeable.sol";
-import "../src/MiniSafeFactoryUpgradeable.sol";
-import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/governance/TimelockController.sol";
+import {Test} from "forge-std/Test.sol";
+import {MiniSafeAaveUpgradeable} from "../src/MiniSafeAaveUpgradeable.sol";
+import {MiniSafeTokenStorageUpgradeable} from "../src/MiniSafeTokenStorageUpgradeable.sol";
+import {MiniSafeAaveIntegrationUpgradeable} from "../src/MiniSafeAaveIntegrationUpgradeable.sol";
+import {MiniSafeFactoryUpgradeable} from "../src/MiniSafeFactoryUpgradeable.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
 
 // Mock ERC20 token for testing
 contract MockERC20 is ERC20 {
@@ -42,7 +42,8 @@ contract MockAavePool {
     }
     
     function supply(address asset, uint256 amount, address onBehalfOf, uint16) external {
-        IERC20(asset).transferFrom(msg.sender, address(this), amount);
+        bool success = IERC20(asset).transferFrom(msg.sender, address(this), amount);
+        require(success, "Transfer failed");
         MockAToken(aTokens[asset]).mint(onBehalfOf, amount);
     }
     
@@ -70,7 +71,8 @@ contract MockAavePool {
         }
         
         // Transfer underlying asset to recipient
-        IERC20(asset).transfer(to, amount);
+        bool success = IERC20(asset).transfer(to, amount);
+        require(success, "Transfer failed");
         return amount;
     }
 }
@@ -478,13 +480,21 @@ contract MiniSafeThriftCompleteTest is Test {
         vm.prank(user1);
         thrift.makeContribution(groupId);
         
-        // User2 makes contribution - this triggers automatic payout to user1
-        uint256 balanceBefore = mockToken.balanceOf(user1);
-        
+        // User2 makes contribution
         vm.prank(user2);
         mockToken.approve(address(thrift), 100 * 10**18);
         vm.prank(user2);
         thrift.makeContribution(groupId, address(mockToken), 100 * 10**18);
+        
+        // M-6 Fix: Payouts now require nextPayoutDate to be reached
+        (, , uint256 nextPayoutDate, , , , , , ) = thrift.getGroupInfo(groupId);
+        vm.warp(nextPayoutDate);
+        
+        uint256 balanceBefore = mockToken.balanceOf(user1);
+        
+        // Trigger payout explicitly
+        vm.prank(user1);
+        thrift.distributePayout(groupId);
         
         // Check that user1 received the payout (200 tokens total from both contributions)
         uint256 balanceAfter = mockToken.balanceOf(user1);
@@ -543,7 +553,7 @@ contract MiniSafeThriftCompleteTest is Test {
     }
 
     function testVersion() public {
-        assertEq(thrift.version(), "1.0.0");
+        assertEq(thrift.version(), "1.0.1");
     }
 
     // ===== BRANCH COVERAGE TESTS =====
@@ -767,7 +777,7 @@ contract MiniSafeThriftCompleteTest is Test {
         vm.prank(user1);
         mockToken.approve(address(thrift), 50 * 10**18);
         vm.prank(user1);
-        vm.expectRevert("Contribution amount too small");
+        vm.expectRevert("Contribution amount must match exactly");
         thrift.makeContribution(groupId, address(mockToken), 50 * 10**18);
     }
 
@@ -830,7 +840,16 @@ contract MiniSafeThriftCompleteTest is Test {
         vm.prank(user2);
         thrift.makeContribution(groupId);
         
-        // user1 received payout, now tries to leave
+        // M-6 Fix: Payouts now require nextPayoutDate to be reached
+        // Get nextPayoutDate and warp to it
+        (, , uint256 nextPayoutDate, , , , , , ) = thrift.getGroupInfo(groupId);
+        vm.warp(nextPayoutDate);
+        
+        // Trigger payout explicitly (since automatic payout requires time)
+        vm.prank(user1); // user1 is the group admin
+        thrift.distributePayout(groupId);
+        
+        // user1 received payout, now tries to leave - should revert because group is still active
         vm.prank(user1);
         vm.expectRevert("Cannot leave after receiving payout");
         thrift.leaveGroup(groupId);
@@ -1012,7 +1031,7 @@ contract MiniSafeThriftCompleteTest is Test {
         
         vm.warp(block.timestamp + 1 days);
         
-        // Make contributions to trigger payout
+        // Make contributions
         vm.prank(user1);
         mockToken.approve(address(thrift), 100 * 10**18);
         vm.prank(user1);
@@ -1022,6 +1041,14 @@ contract MiniSafeThriftCompleteTest is Test {
         mockToken.approve(address(thrift), 100 * 10**18);
         vm.prank(user2);
         thrift.makeContribution(groupId);
+        
+        // M-6 Fix: Payouts now require nextPayoutDate to be reached
+        (, , uint256 nextPayoutDate, , , , , , ) = thrift.getGroupInfo(groupId);
+        vm.warp(nextPayoutDate);
+        
+        // Trigger payout explicitly
+        vm.prank(user1);
+        thrift.distributePayout(groupId);
         
         // Get payouts for the group
         MiniSafeAaveUpgradeable.Payout[] memory payouts = thrift.getGroupPayouts(groupId);
@@ -1091,11 +1118,22 @@ contract MiniSafeThriftCompleteTest is Test {
         // Still not all members contributed
         assertFalse(thrift.allMembersContributed(groupId));
         
-        // User2 contributes - this triggers automatic payout and cycle reset
+        // User2 contributes
         vm.prank(user2);
         mockToken.approve(address(thrift), 100 * 10**18);
         vm.prank(user2);
         thrift.makeContribution(groupId);
+        
+        // After contributions, allMembersContributed should be true (before payout)
+        assertTrue(thrift.allMembersContributed(groupId));
+        
+        // M-6 Fix: Payouts now require nextPayoutDate to be reached
+        (, , uint256 nextPayoutDate, , , , , , ) = thrift.getGroupInfo(groupId);
+        vm.warp(nextPayoutDate);
+        
+        // Trigger payout explicitly
+        vm.prank(user1);
+        thrift.distributePayout(groupId);
         
         // After payout, cycle resets so allMembersContributed should be false
         assertFalse(thrift.allMembersContributed(groupId));
@@ -1126,11 +1164,19 @@ contract MiniSafeThriftCompleteTest is Test {
         vm.prank(user1);
         thrift.makeContribution(groupId);
         
-        // User2 contributes - this triggers automatic payout and cycle reset
+        // User2 contributes
         vm.prank(user2);
         mockToken.approve(address(thrift), 100 * 10**18);
         vm.prank(user2);
         thrift.makeContribution(groupId);
+        
+        // M-6 Fix: Payouts now require nextPayoutDate to be reached
+        (, , uint256 nextPayoutDate, , , , , , ) = thrift.getGroupInfo(groupId);
+        vm.warp(nextPayoutDate);
+        
+        // Trigger payout explicitly
+        vm.prank(user1);
+        thrift.distributePayout(groupId);
         
         // After payout, cycle resets so allMembersContributed should be false
         assertFalse(thrift.allMembersContributed(groupId));
@@ -1569,15 +1615,18 @@ contract MiniSafeThriftCompleteTest is Test {
     }
     
     function testInitializeBaseTokens() public {
-        // Set up aToken mapping for cUSD to make it supported
+        // M-5 Fix: cUSD is now initialized during TokenStorage.initialize()
+        // So initializeBaseTokens will try to add it again and revert
         address cusd = tokenStorage.cusdTokenAddress();
+        
+        // Verify cUSD is already supported after M-5 fix
+        assertTrue(tokenStorage.isValidToken(cusd), "cUSD should already be valid after M-5 fix");
+        
+        // Calling initializeBaseTokens again should revert
         mockDataProvider.setAToken(cusd, address(mockAToken));
-        
         vm.prank(owner);
+        vm.expectRevert("Token already supported");
         aaveIntegration.initializeBaseTokens();
-        
-        // Verify cUSD was added as a supported token
-        assertTrue(tokenStorage.isValidToken(cusd));
     }
     
     function testInitializeBaseTokens_NotOwner() public {
@@ -1700,31 +1749,6 @@ contract MiniSafeThriftCompleteTest is Test {
         assertEq(userShare, 0);
     }
     
-    function testInitiateEmergencyWithdrawal() public {
-        vm.prank(owner);
-        thrift.initiateEmergencyWithdrawal();
-        
-        // Check that emergency withdrawal is available in the future
-        assertGt(thrift.emergencyWithdrawalAvailableAt(), block.timestamp);
-    }
-    
-    function testCancelEmergencyWithdrawal() public {
-        vm.prank(owner);
-        thrift.initiateEmergencyWithdrawal();
-        
-        vm.prank(owner);
-        thrift.cancelEmergencyWithdrawal();
-        
-        // Check that emergency withdrawal is no longer available
-        assertEq(thrift.emergencyWithdrawalAvailableAt(), 0);
-    }
-    
-    function testCancelEmergencyWithdrawal_NotInitiated() public {
-        vm.prank(owner);
-        vm.expectRevert("No emergency withdrawal initiated");
-        thrift.cancelEmergencyWithdrawal();
-    }
-    
     function testExecuteEmergencyWithdrawal() public {
         uint256 amount = 100 * 10**18;
         mockToken.mint(owner, amount);
@@ -1736,38 +1760,15 @@ contract MiniSafeThriftCompleteTest is Test {
         vm.prank(owner);
         thrift.deposit(address(mockToken), amount);
         
-        vm.prank(owner);
-        thrift.initiateEmergencyWithdrawal();
-        
-        // Fast forward time
-        vm.warp(block.timestamp + 7 days);
+        // Ensure integration has aTokens to withdraw
+        // Since we are mocking, we might need to simulate this if Integration mocks it or if real integration is used.
+        // Assuming this test file uses similar setup to IntegrationTests.
         
         vm.prank(owner);
-        thrift.executeEmergencyWithdrawal(address(mockToken));
-    }
-    
-    function testExecuteEmergencyWithdrawal_NotInitiated() public {
-        vm.prank(owner);
-        vm.expectRevert("Emergency withdrawal not initiated");
-        thrift.executeEmergencyWithdrawal(address(mockToken));
-    }
-    
-    function testExecuteEmergencyWithdrawal_TooEarly() public {
-        vm.prank(owner);
-        thrift.initiateEmergencyWithdrawal();
-        
-        vm.prank(owner);
-        vm.expectRevert("Emergency timelock not expired");
         thrift.executeEmergencyWithdrawal(address(mockToken));
     }
     
     function testExecuteEmergencyWithdrawal_NoBalance() public {
-        vm.prank(owner);
-        thrift.initiateEmergencyWithdrawal();
-        
-        // Fast forward time
-        vm.warp(block.timestamp + 7 days);
-        
         vm.prank(owner);
         vm.expectRevert("Amount must be greater than 0");
         thrift.executeEmergencyWithdrawal(address(mockToken));
@@ -1953,7 +1954,7 @@ contract MiniSafeThriftCompleteTest is Test {
     
     function testVersion_Storage() public {
         string memory version = tokenStorage.version();
-        assertEq(version, "1.0.0");
+        assertEq(version, "1.0.1");
     }
     
     function testAuthorizeUpgrade_Storage() public {
@@ -1975,7 +1976,7 @@ contract MiniSafeThriftCompleteTest is Test {
         MiniSafeFactoryUpgradeable.UpgradeableConfig memory config = MiniSafeFactoryUpgradeable.UpgradeableConfig({
             proposers: proposers,
             executors: executors,
-            minDelay: 1 days,
+            minDelay: 2 days,
             allowPublicExecution: false,
             aaveProvider: address(mockProvider)
         });
@@ -1998,7 +1999,7 @@ contract MiniSafeThriftCompleteTest is Test {
         MiniSafeFactoryUpgradeable.UpgradeableConfig memory config = MiniSafeFactoryUpgradeable.UpgradeableConfig({
             proposers: proposers,
             executors: executors,
-            minDelay: 1 days,
+            minDelay: 2 days,
             allowPublicExecution: false,
             aaveProvider: address(0)
         });
@@ -2011,7 +2012,7 @@ contract MiniSafeThriftCompleteTest is Test {
     function testDeployWithRecommendedMultiSig() public {
         address[5] memory signers = [user1, user2, user3, user4, user5];
         
-        MiniSafeFactoryUpgradeable.MiniSafeAddresses memory addresses = factory.deployWithRecommendedMultiSig(signers, 1 days, address(mockProvider));
+        MiniSafeFactoryUpgradeable.MiniSafeAddresses memory addresses = factory.deployWithRecommendedMultiSig(signers, 2 days, address(mockProvider));
         
         assertTrue(addresses.miniSafe != address(0));
         assertTrue(addresses.timelock != address(0));
@@ -2029,12 +2030,12 @@ contract MiniSafeThriftCompleteTest is Test {
         
         vm.prank(owner);
         vm.expectRevert();
-        factory.deployWithRecommendedMultiSig(signers, 1 days, address(0));
+        factory.deployWithRecommendedMultiSig(signers, 2 days, address(0));
     }
     
     function testDeployForSingleOwner() public {
         address singleOwner = user1;
-        MiniSafeFactoryUpgradeable.MiniSafeAddresses memory addresses = factory.deployForSingleOwner(singleOwner, 1 days, address(mockProvider));
+        MiniSafeFactoryUpgradeable.MiniSafeAddresses memory addresses = factory.deployForSingleOwner(singleOwner, 2 days, address(mockProvider));
         
         assertTrue(addresses.miniSafe != address(0));
         assertTrue(addresses.timelock != address(0));
@@ -2047,7 +2048,7 @@ contract MiniSafeThriftCompleteTest is Test {
     function testDeployForSingleOwner_ZeroAddress() public {
         vm.prank(owner);
         vm.expectRevert();
-        factory.deployForSingleOwner(address(0), 1 days, address(0));
+        factory.deployForSingleOwner(address(0), 2 days, address(0));
     }
     
     function testUpgradeImplementations() public {
@@ -2055,36 +2056,10 @@ contract MiniSafeThriftCompleteTest is Test {
         factory.upgradeImplementations(address(0), address(0), address(0));
     }
     
-    function testUpgradeSpecificContract() public {
-        vm.prank(owner);
-        vm.expectRevert();
-        factory.upgradeSpecificContract(address(0), address(0), "");
-    }
-    
-    function testIsMiniSafeContract() public {
-        // For proxies, factory may return false based on simplified recognition logic
-        bool isContract = factory.isMiniSafeContract(address(thrift));
-        assertTrue(isContract || !isContract); // Do not enforce specific outcome
-        
-        bool isNotContract = factory.isMiniSafeContract(address(0x123));
-        assertFalse(isNotContract);
-    }
-    
-    function testGetContractImplementation() public {
-        address implementation = factory.getContractImplementation(address(thrift));
-        assertEq(implementation, address(0)); // Would need to be set up properly
-    }
-    
-    function testBatchUpgradeContracts() public {
-        address[] memory contracts = new address[](1);
-        contracts[0] = address(thrift);
-        address[] memory implementations = new address[](1);
-        implementations[0] = address(0x123);
-        
-        vm.prank(owner);
-        vm.expectRevert();
-        factory.batchUpgradeContracts(contracts, implementations);
-    }
+    // NOTE: Tests for upgradeSpecificContract, isMiniSafeContract, getContractImplementation, 
+    // and batchUpgradeContracts have been removed because those factory functions were removed.
+    // The factory cannot upgrade proxies - only the Timelock (as owner) can do that.
+    // See docs/upgrade-mechanism.md for the upgrade flow.
     
     function testGetImplementations() public {
         (address miniImpl, address tokenImpl, address aaveImpl) = factory.getImplementations();
@@ -2105,20 +2080,20 @@ contract MiniSafeThriftCompleteTest is Test {
         executors[0] = address(this);
         
         TimelockController timelock = new TimelockController(
-            1 days,
+            2 days,
             proposers,
             executors,
             address(0)
         );
         
         (,, uint256 minDelay) = factory.getMultiSigInfo(address(timelock));
-        assertEq(minDelay, 1 days);
+        assertEq(minDelay, 2 days);
         // Note: proposersCount and executorsCount will be 0 due to contract limitations
     }
     
     function testVersion_Factory() public {
         string memory version = factory.version();
-        assertEq(version, "1.0.0");
+        assertEq(version, "1.0.1");
     }
     
     function testAuthorizeUpgrade_Factory() public {
@@ -2186,17 +2161,7 @@ contract MiniSafeThriftCompleteTest is Test {
         assertEq(depositTime, 0);
     }
     
-    function testFactoryUpgradeErrorPaths() public {
-        // Test upgradeSpecificContract with invalid inputs
-        vm.prank(owner);
-        vm.expectRevert();
-        factory.upgradeSpecificContract(address(0), address(0x123), "");
-        
-        // Test with valid contract address but invalid implementation
-        vm.prank(user1);
-        vm.expectRevert();
-        factory.upgradeSpecificContract(address(thrift), address(0x123), "");
-    }
+    // testFactoryUpgradeErrorPaths removed - factory upgrade functions have been deleted
     
     function testEmergencyWithdrawErrorConditions() public {
         uint256 depositAmount = 100 * 10**18;

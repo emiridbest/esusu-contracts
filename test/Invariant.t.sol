@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.29;
 
-import "forge-std/Test.sol";
-import "../src/MiniSafeTokenStorageUpgradeable.sol";
-import "../src/MiniSafeAaveUpgradeable.sol";
-import "../src/MiniSafeAaveIntegrationUpgradeable.sol";
-import "../src/MiniSafeFactoryUpgradeable.sol";
-import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {Test} from "forge-std/Test.sol";
+import {MiniSafeTokenStorageUpgradeable} from "../src/MiniSafeTokenStorageUpgradeable.sol";
+import {MiniSafeAaveUpgradeable} from "../src/MiniSafeAaveUpgradeable.sol";
+import {MiniSafeAaveIntegrationUpgradeable} from "../src/MiniSafeAaveIntegrationUpgradeable.sol";
+import {MiniSafeFactoryUpgradeable} from "../src/MiniSafeFactoryUpgradeable.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 // Thrift functionality is now integrated into MiniSafeAaveUpgradeable.sol
-import "@openzeppelin/contracts/governance/TimelockController.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 contract MockERC20 {
     mapping(address => uint256) public balanceOf;
@@ -69,14 +69,16 @@ contract MockAavePool {
         if (shouldFailSupply) revert("Mock supply failure");
         deposits[asset] += amount;
         // Transfer tokens from caller
-        MockERC20(asset).transferFrom(msg.sender, address(this), amount);
+        bool success = MockERC20(asset).transferFrom(msg.sender, address(this), amount);
+        require(success, "Transfer failed");
     }
     
     function withdraw(address asset, uint256 amount, address to) external returns (uint256) {
         if (shouldFailWithdraw) revert("Mock withdraw failure");
         require(deposits[asset] >= amount, "Insufficient deposits");
         deposits[asset] -= amount;
-        MockERC20(asset).transfer(to, amount);
+        bool success = MockERC20(asset).transfer(to, amount);
+        require(success, "Transfer failed");
         return amount;
     }
 }
@@ -185,7 +187,7 @@ contract ComprehensiveInvariantTest is Test {
         
         // Deploy timelock controller
         timelock = new TimelockController(
-            24 hours,
+            2 days,
             proposers,
             executors,
             address(0) // No admin - timelock is self-administered
@@ -203,7 +205,7 @@ contract ComprehensiveInvariantTest is Test {
         MiniSafeFactoryUpgradeable.UpgradeableConfig memory config = MiniSafeFactoryUpgradeable.UpgradeableConfig({
             proposers: proposers,
             executors: executors,
-            minDelay: 24 hours,
+            minDelay: 2 days,
             allowPublicExecution: false,
             aaveProvider: address(mockProvider)
         });
