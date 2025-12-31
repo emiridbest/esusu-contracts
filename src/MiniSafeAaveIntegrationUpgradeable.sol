@@ -86,7 +86,7 @@ contract MiniSafeAaveIntegrationUpgradeable is Initializable, OwnableUpgradeable
      * @dev Get implementation version
      */
     function version() external pure returns (string memory) {
-        return "1.0.0";
+        return "1.0.1";
     }
 
     /**

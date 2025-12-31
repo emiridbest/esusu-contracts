@@ -109,7 +109,7 @@ contract MiniSafeFactoryUpgradeableTest is Test {
             executors: executors,
             minDelay: MIN_DELAY,
             allowPublicExecution: false,
-            aaveProvider: address(0)
+            aaveProvider: address(0x9F7Cf9417D5251C59fE94fB9147feEe1aAd9Cea5) // L-4: Must provide explicit provider
         });
 
         MiniSafeFactoryUpgradeable.MiniSafeAddresses memory addresses = factory.deployUpgradeableMiniSafe(config);
@@ -129,7 +129,7 @@ contract MiniSafeFactoryUpgradeableTest is Test {
 
     function testDeployWithRecommendedMultiSig() public {
         address[5] memory signers = [address(0x101), address(0x102), address(0x103), address(0x104), address(0x105)];
-        MiniSafeFactoryUpgradeable.MiniSafeAddresses memory addresses = factory.deployWithRecommendedMultiSig(signers, MIN_DELAY, address(0));
+        MiniSafeFactoryUpgradeable.MiniSafeAddresses memory addresses = factory.deployWithRecommendedMultiSig(signers, MIN_DELAY, address(0x9F7Cf9417D5251C59fE94fB9147feEe1aAd9Cea5));
         
         assertTrue(addresses.miniSafe != address(0));
         TimelockController timelock = TimelockController(payable(addresses.timelock));
@@ -143,7 +143,7 @@ contract MiniSafeFactoryUpgradeableTest is Test {
 
     function testDeployForSingleOwner() public {
         address singleOwner = address(0x999);
-        MiniSafeFactoryUpgradeable.MiniSafeAddresses memory addresses = factory.deployForSingleOwner(singleOwner, MIN_DELAY, address(0));
+        MiniSafeFactoryUpgradeable.MiniSafeAddresses memory addresses = factory.deployForSingleOwner(singleOwner, MIN_DELAY, address(0x9F7Cf9417D5251C59fE94fB9147feEe1aAd9Cea5));
         
         assertTrue(addresses.miniSafe != address(0));
         TimelockController timelock = TimelockController(payable(addresses.timelock));
@@ -230,7 +230,7 @@ contract MiniSafeAaveIntegrationUpgradeableTest is Test {
     }
 
     function testVersion() public {
-        assertEq(integration.version(), "1.0.0");
+        assertEq(integration.version(), "1.0.1");
     }
 
     function testInitialize() public {
@@ -247,11 +247,13 @@ contract MiniSafeAaveIntegrationUpgradeableTest is Test {
             abi.encode(address(0x2000), address(0), address(0))
         );
         
-        // Test with authorized manager (owner) - should succeed
+        // M-5 Fix: cUSD is now initialized during TokenStorage.initialize()
+        // So calling initializeBaseTokens will revert with "Token already supported"
         vm.prank(owner);
+        vm.expectRevert("Token already supported");
         integration.initializeBaseTokens();
 
-        // Test with unauthorized manager - should fail
+        // Test with unauthorized manager - should fail with OwnableUnauthorizedAccount
         vm.prank(address(0x1234));
         vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", address(0x1234)));
         integration.initializeBaseTokens();
@@ -267,7 +269,7 @@ contract MiniSafeAaveIntegrationUpgradeableTest is Test {
         integration.upgradeToAndCall(address(newImpl), "");
 
         // Verify upgrade by checking version
-        assertEq(integration.version(), "1.0.0");
+        assertEq(integration.version(), "1.0.1");
     }
 }
 
@@ -434,6 +436,6 @@ contract MiniSafeTokenStorageUpgradeableTest is Test {
     }
 
     function testVersion() public {
-        assertEq(tokenStorage.version(), "1.0.0");
+        assertEq(tokenStorage.version(), "1.0.1");
     }
 }

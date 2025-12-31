@@ -89,7 +89,7 @@ contract MiniSafeTokenStorageUpgradeable is Initializable, OwnableUpgradeable, P
      * @dev Get implementation version
      */
     function version() external pure returns (string memory) {
-        return "1.0.0";
+        return "1.0.1";
     }
 
     /**

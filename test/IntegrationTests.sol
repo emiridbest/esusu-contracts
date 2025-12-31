@@ -671,10 +671,10 @@ contract IntegrationTests is Test {
         string memory aaveIntegrationVersion = aaveIntegration.version();
         string memory factoryVersion = factory.version();
         
-        assertEq(miniSafeVersion, "1.0.0");
-        assertEq(tokenStorageVersion, "1.0.0");
-        assertEq(aaveIntegrationVersion, "1.0.0");
-        assertEq(factoryVersion, "1.0.0");
+        assertEq(miniSafeVersion, "1.0.1");
+        assertEq(tokenStorageVersion, "1.0.1");
+        assertEq(aaveIntegrationVersion, "1.0.1");
+        assertEq(factoryVersion, "1.0.1");
     }
 
     // ==================== VERSION TESTS ====================
@@ -685,10 +685,10 @@ contract IntegrationTests is Test {
         string memory aaveIntegrationVersion = aaveIntegration.version();
         string memory factoryVersion = factory.version();
         
-        assertEq(miniSafeVersion, "1.0.0");
-        assertEq(tokenStorageVersion, "1.0.0");
-        assertEq(aaveIntegrationVersion, "1.0.0");
-        assertEq(factoryVersion, "1.0.0");
+        assertEq(miniSafeVersion, "1.0.1");
+        assertEq(tokenStorageVersion, "1.0.1");
+        assertEq(aaveIntegrationVersion, "1.0.1");
+        assertEq(factoryVersion, "1.0.1");
     }
 
     // ==================== COMPREHENSIVE INTEGRATION TEST ====================
@@ -1914,7 +1914,7 @@ contract IntegrationTests is Test {
     function testFactory_Version_And_MultiSigInfo() public {
         // version()
         string memory v = factory.version();
-        assertEq(keccak256(bytes(v)), keccak256(bytes("1.0.0")));
+        assertEq(keccak256(bytes(v)), keccak256(bytes("1.0.1")));
 
         // deploy and query multisig info
         MiniSafeFactoryUpgradeable.UpgradeableConfig memory config;

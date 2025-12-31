@@ -545,7 +545,7 @@ contract MiniSafeThriftCompleteTest is Test {
     }
 
     function testVersion() public {
-        assertEq(thrift.version(), "1.0.0");
+        assertEq(thrift.version(), "1.0.1");
     }
 
     // ===== BRANCH COVERAGE TESTS =====
@@ -769,7 +769,7 @@ contract MiniSafeThriftCompleteTest is Test {
         vm.prank(user1);
         mockToken.approve(address(thrift), 50 * 10**18);
         vm.prank(user1);
-        vm.expectRevert("Contribution amount too small");
+        vm.expectRevert("Contribution amount must match exactly");
         thrift.makeContribution(groupId, address(mockToken), 50 * 10**18);
     }
 
@@ -832,7 +832,15 @@ contract MiniSafeThriftCompleteTest is Test {
         vm.prank(user2);
         thrift.makeContribution(groupId);
         
-        // user1 received payout, now tries to leave
+        // M-6 Fix: Payouts now require nextPayoutDate to be reached
+        // Get nextPayoutDate and warp to it
+        (, , uint256 nextPayoutDate, , , , , , ) = thrift.getGroupInfo(groupId);
+        vm.warp(nextPayoutDate);
+        
+        // Trigger payout explicitly (since automatic payout requires time)
+        thrift.distributePayout(groupId);
+        
+        // user1 received payout, now tries to leave - should revert because group is still active
         vm.prank(user1);
         vm.expectRevert("Cannot leave after receiving payout");
         thrift.leaveGroup(groupId);
@@ -1571,15 +1579,18 @@ contract MiniSafeThriftCompleteTest is Test {
     }
     
     function testInitializeBaseTokens() public {
-        // Set up aToken mapping for cUSD to make it supported
+        // M-5 Fix: cUSD is now initialized during TokenStorage.initialize()
+        // So initializeBaseTokens will try to add it again and revert
         address cusd = tokenStorage.cusdTokenAddress();
+        
+        // Verify cUSD is already supported after M-5 fix
+        assertTrue(tokenStorage.isValidToken(cusd), "cUSD should already be valid after M-5 fix");
+        
+        // Calling initializeBaseTokens again should revert
         mockDataProvider.setAToken(cusd, address(mockAToken));
-        
         vm.prank(owner);
+        vm.expectRevert("Token already supported");
         aaveIntegration.initializeBaseTokens();
-        
-        // Verify cUSD was added as a supported token
-        assertTrue(tokenStorage.isValidToken(cusd));
     }
     
     function testInitializeBaseTokens_NotOwner() public {
@@ -1723,14 +1734,6 @@ contract MiniSafeThriftCompleteTest is Test {
     
     function testExecuteEmergencyWithdrawal_NoBalance() public {
         vm.prank(owner);
-        
-        vm.expectRevert("No contribution to withdraw"); // Wait, executeEmergencyWithdrawal doesn't revert on 0 balance unless pool reverts?
-        // Actually, integration.withdrawFromAave reverts if amount is 0?
-        // Let's check MiniSafeAaveIntegrationUpgradeable.withdrawFromAave
-        // "Amount must be greater than 0"
-        // But executeEmergencyWithdrawal gets balance of aTokens. If balance is 0, it calls withdraw(0).
-        // Does integration revert on 0? Yes.
-        
         vm.expectRevert("Amount must be greater than 0");
         thrift.executeEmergencyWithdrawal(address(mockToken));
     }
@@ -1915,7 +1918,7 @@ contract MiniSafeThriftCompleteTest is Test {
     
     function testVersion_Storage() public {
         string memory version = tokenStorage.version();
-        assertEq(version, "1.0.0");
+        assertEq(version, "1.0.1");
     }
     
     function testAuthorizeUpgrade_Storage() public {
@@ -2054,7 +2057,7 @@ contract MiniSafeThriftCompleteTest is Test {
     
     function testVersion_Factory() public {
         string memory version = factory.version();
-        assertEq(version, "1.0.0");
+        assertEq(version, "1.0.1");
     }
     
     function testAuthorizeUpgrade_Factory() public {
