@@ -3,9 +3,15 @@ rpc_url = "https://celo-mainnet.infura.io/v3/0bbb45846bdf44d1bcbe6275327619ad"
 src = "src"
 out = "out"
 libs = ["lib"]
+<<<<<<< HEAD
 optimizer = true
 optimizer_runs = 800
 via_ir = true
+=======
+via_ir = true  # Enable Yul IR compiler to help with "stack too deep" errors
+optimizer = true
+optimizer_runs = 200
+>>>>>>> main
 
 [etherscan]
 celo-alfajores = { key = "${CELOSCAN_API_KEY}", url = "https://api-alfajores.celoscan.io/api"}
