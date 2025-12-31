@@ -56,14 +56,15 @@ contract MiniSafeAaveIntegration102 is
 
     /**
      * @dev Initialize the contract with Aave integration
-     * @param _aavePoolAddressesProvider Address of the Aave Pool Addresses Provider // 0x9F7Cf9417D5251C59fE94fB9147feEe1aAd9Cea5
-     * This address is used to get the Aave Pool and Data Provider contracts
-     * @notice This constructor sets up the Aave pool and initializes base tokens
+     * @param _aavePoolAddressesProvider Address of the Aave Pool Addresses Provider
+     * @param _tokenStorage Address of the Token Storage contract
+     * @notice This constructor sets up the Aave pool
      */
-    constructor(address _aavePoolAddressesProvider) Ownable(msg.sender) {
+    constructor(address _aavePoolAddressesProvider, address _tokenStorage) Ownable(msg.sender) {
         require(_aavePoolAddressesProvider != address(0), "Invalid Pool Provider address");
+        require(_tokenStorage != address(0), "Invalid Token Storage address");
         
-        tokenStorage = new MiniSafeTokenStorage102();
+        tokenStorage = MiniSafeTokenStorage102(_tokenStorage);
         // Initialize Aave pool
         IPoolAddressesProvider provider = IPoolAddressesProvider(
             _aavePoolAddressesProvider
@@ -71,8 +72,7 @@ contract MiniSafeAaveIntegration102 is
         aavePool = IPool(provider.getPool());
         dataProvider = IPoolDataProvider(provider.getPoolDataProvider());
 
-        // Initialize default tokens
-        initializeBaseTokens();
+        // Note: initializeBaseTokens must be called explicitly after authorization is granted
     }
 
     /**
@@ -379,7 +379,8 @@ contract MiniSafeAaveIntegration102 is
         }
 
         // Health factor = (collateral * liquidation threshold) / debt
-        healthFactor = (userCollateralBase * currentLiquidationThreshold) / (userDebtBase * 10000);
+        // Multiply by 1e27 to convert to Ray units as expected by MIN_HEALTH_FACTOR
+        healthFactor = (userCollateralBase * currentLiquidationThreshold * 1e27) / (userDebtBase * 10000);
 
         return healthFactor;
     }
@@ -807,7 +808,7 @@ contract MiniSafeAaveIntegration102 is
     /**
      * @dev Initialize the base tokens with their aToken addresses
      */
-    function initializeBaseTokens() internal onlyOwner {
+    function initializeBaseTokens() public onlyOwner {
         // Try to get aToken addresses for base tokens
         try
             dataProvider.getReserveTokensAddresses(

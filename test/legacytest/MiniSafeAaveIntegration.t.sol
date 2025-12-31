@@ -11,6 +11,7 @@ import "../../src/legacyMinisafe/MiniSafeAaveIntegration.sol";
 import {IPool} from "@aave/contracts/interfaces/IPool.sol";
 import {IPoolAddressesProvider} from "@aave/contracts/interfaces/IPoolAddressesProvider.sol";
 import {DataTypes} from "@aave/contracts/protocol/libraries/types/DataTypes.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 // Mock contracts for testing Aave integration
 abstract contract MockAavePool is IPool {
@@ -33,9 +34,21 @@ abstract contract MockAavePool is IPool {
     }
     
     function supply(address asset, uint256 amount, address onBehalfOf, uint16 referralCode) external virtual override {
-        // Mock the supply function
-        // In a real implementation, this would transfer tokens and mint aTokens
+        // Mock the supply function: track supplied balance and mint aTokens to onBehalfOf
         mockBalances[asset] += amount;
+
+        // Transfer tokens from msg.sender to this contract (mimic real pool behavior)
+        IERC20(asset).transferFrom(msg.sender, address(this), amount);
+
+        // Determine which mock aToken to mint based on the asset
+        address aTokenAddress;
+        if (asset == address(0x765DE816845861e75A25fCA122bb6898B8B1282a)) { // cUSD constant
+            aTokenAddress = mockATokenForCUSD;
+        } else {
+            aTokenAddress = mockATokenForToken;
+        }
+
+        MockAToken(aTokenAddress).mint(onBehalfOf, amount);
     }
     
     function withdraw(address asset, uint256 amount, address to) external override returns (uint256) {
@@ -45,6 +58,10 @@ abstract contract MockAavePool is IPool {
             amount = mockBalances[asset];
         }
         mockBalances[asset] -= amount;
+
+        // Transfer underlying tokens back to user
+        IERC20(asset).transfer(to, amount);
+
         return amount;
     }
 
@@ -328,21 +345,18 @@ contract MiniSafeAaveIntegrationTest is Test {
         mockAddressesProvider = new MockAaveAddressesProviderImpl(address(mockPool));
         mockAddressesProvider.setPoolDataProvider(address(mockDataProvider));
         
-        // Deploy token storage with no arguments
+        // Deploy token storage
         tokenStorage = new MiniSafeTokenStorage102();
-        
-        // Deploy Aave integration with the addresses provider
-        aaveIntegration = new MiniSafeAaveIntegration102(address(mockAddressesProvider));
-        
-        // Grant permissions and setup connections manually
-        vm.prank(aaveIntegration.owner());
-        aaveIntegration.transferOwnership(owner);
-        
-        // Set the token storage authorization
-        vm.startPrank(tokenStorage.owner());
+
+        // Deploy Aave integration with the addresses provider and token storage
+        aaveIntegration = new MiniSafeAaveIntegration102(address(mockAddressesProvider), address(tokenStorage));
+
+        // Authorize the integration as a manager in its token storage
+        // Since we deployed tokenStorage, we are the owner
         tokenStorage.setManagerAuthorization(address(aaveIntegration), true);
-        tokenStorage.transferOwnership(address(aaveIntegration));
-        vm.stopPrank();
+        
+        // Initialize base tokens manually as it's no longer in constructor
+        aaveIntegration.initializeBaseTokens();
     }
 
     function testInitialState() public view { 
@@ -352,7 +366,7 @@ contract MiniSafeAaveIntegrationTest is Test {
         assertEq(address(aaveIntegration.dataProvider()), address(mockDataProvider)); // Should be our mock provider
         
         // Check if the tokenStorage is properly owned and configured
-        assertEq(tokenStorage.owner(), address(aaveIntegration)); // Integration contract should own the storage
+        assertEq(tokenStorage.owner(), owner); // Test contract should own the storage
         assertTrue(tokenStorage.authorizedManagers(address(aaveIntegration))); // Integration should be authorized
     }
     
@@ -371,9 +385,8 @@ contract MiniSafeAaveIntegrationTest is Test {
       
     function testUpdateAavePool() public {
         // Transfer ownership to the test contract
-        vm.startPrank(address(aaveIntegration));
-        aaveIntegration.transferOwnership(owner);
-        vm.stopPrank();
+        // Ensure we are the owner (should be by default from setUp)
+        assertEq(aaveIntegration.owner(), address(this));
           // Create a new mock pool
         MockAavePoolImpl newMockPool = new MockAavePoolImpl(address(mockATokenCUSD), address(mockATokenRandom));
         vm.expectEmit(true, false, false, true);

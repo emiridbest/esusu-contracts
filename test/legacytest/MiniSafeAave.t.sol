@@ -42,6 +42,7 @@ contract MiniSafeAaveTest is Test {
     MockAToken public mockATokenRandom;
     MockERC20 public mockCUSD;
     MockERC20 public mockRandomToken;
+    MockPoolDataProvider public mockDataProvider;
     
     // Accounts
     address public owner;
@@ -76,20 +77,26 @@ contract MiniSafeAaveTest is Test {
         // Deploy mock Aave contracts
         mockPool = new MockAavePoolConcrete(address(mockATokenCUSD), address(mockATokenRandom));
         
-        // Deploy token storage
-        tokenStorage = new MiniSafeTokenStorage102();
+        // Initialize mock addresses provider
+        mockAddressesProvider = new MockAaveAddressesProviderImpl(address(mockPool));
         
-        // Deploy Aave integration
-        aaveIntegration = new MiniSafeAaveIntegration102(address(tokenStorage));
+        // Initialize and set mock data provider
+        mockDataProvider = new MockPoolDataProvider(address(mockATokenCUSD), address(mockATokenRandom));
+        mockAddressesProvider.setPoolDataProvider(address(mockDataProvider));
+
+        // Deploy MiniSafeAave, which internally creates and wires its own
+        // MiniSafeTokenStorage102 and MiniSafeAaveIntegration102 instances.
+        miniSafe = new MiniSafeAave102(address(mockAddressesProvider));
+
+        // Use the storage and integration instances owned by miniSafe
+        tokenStorage = miniSafe.tokenStorage();
+        aaveIntegration = miniSafe.aaveIntegration();
         
-        // Deploy MiniSafeAave
-        miniSafe = new MiniSafeAave102();
-        
-        // Set up permissions
+        // Ensure miniSafe is an authorized manager in its token storage
         tokenStorage.setManagerAuthorization(address(miniSafe), true);
         
         // Add a token for testing
-        aaveIntegration.addSupportedToken(address(mockRandomToken));
+        miniSafe.addSupportedToken(address(mockRandomToken));
         
         // Mint tokens to users for testing
         mockCUSD.mint(user1, DEPOSIT_AMOUNT * 10);

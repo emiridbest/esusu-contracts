@@ -56,15 +56,15 @@ contract MiniSafeAave102 is ReentrancyGuard, Pausable, IMiniSafeCommon {
     /**
      * @dev Initialize the contract with initial token supply and dependencies
      */
-    constructor() {
+    constructor(address _aavePoolAddressesProvider) {
         // Store the initial owner
         _owner = msg.sender;
 
         // Create token storage first
         tokenStorage = new MiniSafeTokenStorage102();
 
-        // Then create aaveIntegration with the tokenStorage address
-        aaveIntegration = new MiniSafeAaveIntegration102(address(tokenStorage));
+        // Then create aaveIntegration with the addresses provider
+        aaveIntegration = new MiniSafeAaveIntegration102(_aavePoolAddressesProvider, address(tokenStorage));
 
         // Initial circuit breaker thresholds
         withdrawalAmountThreshold = 1000 ether;
@@ -72,6 +72,12 @@ contract MiniSafeAave102 is ReentrancyGuard, Pausable, IMiniSafeCommon {
 
         // Register this contract as an authorized manager in token storage
         tokenStorage.setManagerAuthorization(address(this), true);
+        
+        // Register aaveIntegration as authorized manager so it can add supported tokens
+        tokenStorage.setManagerAuthorization(address(aaveIntegration), true);
+        
+        // Initialize base tokens now that authorization is granted
+        aaveIntegration.initializeBaseTokens();
     }
     /**
      * @dev Deposit any supported ERC20 token into savings and then to Aave
