@@ -83,6 +83,7 @@ The system is designed for high-integrity governance:
 
 ## Verification Suite
 
+### Automated Tests
 To run the audit-specific test suite:
 
 ```bash
@@ -90,3 +91,15 @@ forge test --match-path test/AuditFixes.t.sol -vv
 ```
 
 These tests verify every fix listed in the mapping above by simulating attack vectors (e.g., duplicate signers, queue jumping, circuit breaker triggers) and asserting the correct preventive behavior.
+
+### Coverage & Compilation
+The protocol is optimized for comprehensive coverage reporting. To resolve "Stack too deep" errors encountered during unoptimized compilation (required by `forge coverage`), the core logic in `MiniSafeAaveUpgradeable.sol` (specifically `_processPayout`) has been refactored into internal helper functions:
+- `_calculateGroupValue`: Handles yield delta calculations.
+- `_distributeYield`: Manages time-weighted cycles.
+- `_updateThriftAccounting`: Updates the global ledger.
+
+To generate a coverage report:
+```bash
+forge coverage
+```
+

@@ -1120,25 +1120,11 @@ contract MiniSafeAaveUpgradeable is
     function _processPayout(uint256 groupId, address tokenAddress) internal {
         ThriftGroup storage group = thriftGroups[groupId];
         
-        // M-3 Fix: Calculate time-weighted yield distribution using virtual account shares
-        uint256 totalAssets = aaveIntegration.getATokenBalance(tokenAddress);
-        uint256 totalGlobalShares = tokenStorage.getTotalShares(tokenAddress);
-        uint256 poolShares = tokenStorage.getUserTokenShare(address(this), tokenAddress);
-        
-        // Total value currently held by the thrift pool (principal + yield)
-        uint256 totalPoolValue = totalGlobalShares > 0 
-            ? (poolShares * totalAssets) / totalGlobalShares 
-            : 0;
-        
         // This group's share of the pool based on its principal contribution
         uint256 groupPrincipal = group.contributionAmount * group.members.length;
         
-        // Calculate this group's total value (Principal + Yield share)
-        uint256 groupValue = totalThriftStaked[tokenAddress] > 0 
-            ? (totalPoolValue * groupPrincipal) / totalThriftStaked[tokenAddress]
-            : groupPrincipal;
-            
-        uint256 yieldEarned = groupValue > groupPrincipal ? groupValue - groupPrincipal : 0;
+        // M-3 Fix: Calculate time-weighted yield distribution using virtual account shares
+        (uint256 groupValue, uint256 yieldEarned) = _calculateGroupValue(tokenAddress, groupPrincipal);
 
         // Get current recipient based on payout order and cycle
         uint256 recipientIndex = (group.currentCycle - 1) % group.payoutOrder.length;
@@ -1149,51 +1135,15 @@ contract MiniSafeAaveUpgradeable is
 
         // Time-weighted yield distribution to ALL members
         if (yieldEarned > 0) {
-            uint256 payoutTime = block.timestamp;
-            uint256 totalWeightedTime = 0;
-            
-            // First pass: calculate total weighted time
-            for (uint i = 0; i < group.members.length; i++) {
-                uint256 memberTime = payoutTime > cycleContributionTime[groupId][group.members[i]]
-                    ? payoutTime - cycleContributionTime[groupId][group.members[i]]
-                    : 1;
-                totalWeightedTime += memberTime;
-            }
-            
-            // Second pass: distribute yield proportionally
-            if (totalWeightedTime > 0) {
-                for (uint i = 0; i < group.members.length; i++) {
-                    address member = group.members[i];
-                    uint256 memberTime = payoutTime > cycleContributionTime[groupId][member]
-                        ? payoutTime - cycleContributionTime[groupId][member]
-                        : 1;
-                    
-                    uint256 memberYield = (yieldEarned * memberTime) / totalWeightedTime;
-                    
-                    if (memberYield > 0) {
-                        IERC20(tokenAddress).safeTransfer(member, memberYield);
-                        emit ThriftYieldDistributed(groupId, member, memberYield);
-                    }
-                    
-                    // Reset contribution time for next cycle
-                    delete cycleContributionTime[groupId][member];
-                }
-            }
+            _distributeYield(groupId, tokenAddress, yieldEarned);
         }
 
         // Transfer the principal payout to recipient
         IERC20(tokenAddress).safeTransfer(recipient, groupPrincipal);
 
-        // Update virtual account shares (burn shares equivalent to the groupValue withdrawn)
-        uint256 sharesToBurn = totalAssets > 0 ? (groupValue * totalGlobalShares) / totalAssets : 0;
-        if (sharesToBurn > poolShares) sharesToBurn = poolShares;
-        updateUserBalance(address(this), tokenAddress, sharesToBurn, false);
+        // Update accounting for the thrift pool
+        _updateThriftAccounting(tokenAddress, groupValue, groupPrincipal);
         
-        // Update global thrift principal tracking
-        totalThriftStaked[tokenAddress] = totalThriftStaked[tokenAddress] > groupPrincipal
-            ? totalThriftStaked[tokenAddress] - groupPrincipal
-            : 0;
-
         // Record the payout
         payouts.push(Payout({
             payoutId: totalPayouts,
@@ -1209,6 +1159,96 @@ contract MiniSafeAaveUpgradeable is
 
         // Reset for next cycle
         _resetCycle(groupId);
+    }
+
+    /**
+     * @dev Calculate current value and yield for a group
+     * @param tokenAddress Address of the token
+     * @param groupPrincipal Total principal contributed by the group
+     * @return groupValue Total value (principal + yield) for the group
+     * @return yieldEarned Total yield earned by the group
+     */
+    function _calculateGroupValue(address tokenAddress, uint256 groupPrincipal) 
+        internal 
+        view 
+        returns (uint256 groupValue, uint256 yieldEarned) 
+    {
+        uint256 totalAssets = aaveIntegration.getATokenBalance(tokenAddress);
+        uint256 totalGlobalShares = tokenStorage.getTotalShares(tokenAddress);
+        uint256 poolShares = tokenStorage.getUserTokenShare(address(this), tokenAddress);
+        
+        // Total value currently held by the thrift pool (principal + yield)
+        uint256 totalPoolValue = totalGlobalShares > 0 
+            ? (poolShares * totalAssets) / totalGlobalShares 
+            : 0;
+        
+        // This group's share of the pool based on its principal contribution
+        groupValue = totalThriftStaked[tokenAddress] > 0 
+            ? (totalPoolValue * groupPrincipal) / totalThriftStaked[tokenAddress]
+            : groupPrincipal;
+            
+        yieldEarned = groupValue > groupPrincipal ? groupValue - groupPrincipal : 0;
+    }
+
+    /**
+     * @dev Distribute yield to group members based on contribution timing
+     * @param groupId ID of the group
+     * @param tokenAddress Address of the token
+     * @param yieldEarned Amount of yield to distribute
+     */
+    function _distributeYield(uint256 groupId, address tokenAddress, uint256 yieldEarned) internal {
+        ThriftGroup storage group = thriftGroups[groupId];
+        uint256 payoutTime = block.timestamp;
+        uint256 totalWeightedTime = 0;
+        
+        // First pass: calculate total weighted time
+        for (uint i = 0; i < group.members.length; i++) {
+            address member = group.members[i];
+            uint256 startTime = cycleContributionTime[groupId][member];
+            uint256 memberTime = payoutTime > startTime ? payoutTime - startTime : 1;
+            totalWeightedTime += memberTime;
+        }
+        
+        // Second pass: distribute yield proportionally
+        if (totalWeightedTime > 0) {
+            for (uint i = 0; i < group.members.length; i++) {
+                address member = group.members[i];
+                uint256 startTime = cycleContributionTime[groupId][member];
+                uint256 memberTime = payoutTime > startTime ? payoutTime - startTime : 1;
+                
+                uint256 memberYield = (yieldEarned * memberTime) / totalWeightedTime;
+                
+                if (memberYield > 0) {
+                    IERC20(tokenAddress).safeTransfer(member, memberYield);
+                    emit ThriftYieldDistributed(groupId, member, memberYield);
+                }
+                
+                // Reset contribution time for next cycle
+                delete cycleContributionTime[groupId][member];
+            }
+        }
+    }
+
+    /**
+     * @dev Update global and pool accounting after a payout
+     * @param tokenAddress Address of the token
+     * @param groupValue Total value withdrawn from Aave
+     * @param groupPrincipal Principal amount distributed
+     */
+    function _updateThriftAccounting(address tokenAddress, uint256 groupValue, uint256 groupPrincipal) internal {
+        uint256 totalAssets = aaveIntegration.getATokenBalance(tokenAddress);
+        uint256 totalGlobalShares = tokenStorage.getTotalShares(tokenAddress);
+        uint256 poolShares = tokenStorage.getUserTokenShare(address(this), tokenAddress);
+
+        // Update virtual account shares (burn shares equivalent to the groupValue withdrawn)
+        uint256 sharesToBurn = totalAssets > 0 ? (groupValue * totalGlobalShares) / totalAssets : 0;
+        if (sharesToBurn > poolShares) sharesToBurn = poolShares;
+        updateUserBalance(address(this), tokenAddress, sharesToBurn, false);
+        
+        // Update global thrift principal tracking
+        totalThriftStaked[tokenAddress] = totalThriftStaked[tokenAddress] > groupPrincipal
+            ? totalThriftStaked[tokenAddress] - groupPrincipal
+            : 0;
     }
 
     /**
