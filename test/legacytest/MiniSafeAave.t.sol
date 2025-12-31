@@ -2,9 +2,9 @@
 pragma solidity ^0.8.29;
 
 import "forge-std/Test.sol";
-import "../src/minisafe/MiniSafeAave.sol";
-import "../src/minisafe/MiniSafeTokenStorage.sol";
-import "../src/minisafe/MiniSafeAaveIntegration.sol";
+import "../../src/legacyMinisafe/MiniSafeAave.sol";
+import "../../src/legacyMinisafe/MiniSafeTokenStorage.sol";
+import "../../src/legacyMinisafe/MiniSafeAaveIntegration.sol";
 import {IPool} from "@aave/contracts/interfaces/IPool.sol";
 import {IPoolAddressesProvider} from "@aave/contracts/interfaces/IPoolAddressesProvider.sol";
 import {DataTypes} from "@aave/contracts/protocol/libraries/types/DataTypes.sol";

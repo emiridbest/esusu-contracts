@@ -2,11 +2,11 @@
 pragma solidity ^0.8.29;
 
 import "forge-std/Test.sol";
-import "../src/minisafe/MiniSafeAave.sol";
-import "../src/minisafe/MiniSafeTokenStorage.sol";
+import "../../src/legacyMinisafe/MiniSafeAave.sol";
+import "../../src/legacyMinisafe/MiniSafeTokenStorage.sol";
 
 // If this file actually exists but has a different path
-import "../src/minisafe/MiniSafeAaveIntegration.sol";
+import "../../src/legacyMinisafe/MiniSafeAaveIntegration.sol";
 // Or alternatively, make sure you create this contract file
 import {IPool} from "@aave/contracts/interfaces/IPool.sol";
 import {IPoolAddressesProvider} from "@aave/contracts/interfaces/IPoolAddressesProvider.sol";

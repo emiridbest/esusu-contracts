@@ -2,9 +2,9 @@
 pragma solidity ^0.8.29;
 
 import "forge-std/Test.sol";
-import "../src/miniSafe/MiniSafeAave.sol";
-import "../src/miniSafe/MiniSafeAaveIntegration.sol";
-import "../src/miniSafe/MiniSafeTokenStorage.sol";
+import "../../src/legacyMinisafe/MiniSafeAave.sol";
+import "../../src/legacyMinisafe/MiniSafeAaveIntegration.sol";
+import "../../src/legacyMinisafe/MiniSafeTokenStorage.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 contract MiniSafeUserIsolationTest is Test {

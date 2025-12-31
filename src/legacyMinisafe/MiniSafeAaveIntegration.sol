@@ -343,12 +343,7 @@ contract MiniSafeAaveIntegration102 is
         uint256 /* interestRateMode */,  // Unused parameter, commented to suppress warning
         bool isBorrow
     ) internal view returns (uint256 healthFactor) {
-        // Calculate the user's collateral value in base currency
-        uint256 userCollateralBase = 0;
-        uint256 userDebtBase = 0;
-        
-        // We need to calculate the proportional values based on the user's contributions
-        // Get the contract's overall position
+        // Get the contract's overall position from Aave
         (
             uint256 totalCollateralBase,
             uint256 totalDebtBase,
@@ -357,73 +352,127 @@ contract MiniSafeAaveIntegration102 is
             ,  // ltv
             
         ) = aavePool.getUserAccountData(address(this));
-        
+
         // Get all supported tokens to calculate user's proportion
         address[] memory tokens = getAllSupportedTokens();
-        
-        // For each token, calculate the user's proportion of collateral
-        for (uint256 i = 0; i < tokens.length; i++) {
-            address token = tokens[i];
-            if (token == address(0)) continue;
-            
-            // Check if this token is used as collateral by this user
-            bool isCollateral = tokenStorage.getUserCollateralSetting(user, token);
-            if (!isCollateral) continue;
-            
-            // Get the user's contribution for this token
-            uint256 userContribution = userDepositContributions[user][token];
-            if (userContribution == 0) continue;
-            
-            // Get the total deposits for this token
-            uint256 totalDeposit = totalDepositedByToken[token];
-            if (totalDeposit == 0) continue;
-            
-            // Calculate the user's proportion of the total collateral for this token
-            uint256 userProportion = (userContribution * 1e18) / totalDeposit;
-            
-            // Get token price information from Aave to convert to base currency
-            // For simplicity in this implementation, we'll use a proportion of the total
-            uint256 tokenCollateralBase = (totalCollateralBase * userProportion) / 1e18;
-            
-            // Add to user's collateral base value
-            userCollateralBase += tokenCollateralBase;
-        }
-        
-        // Calculate user's debt across all tokens
-        for (uint256 i = 0; i < tokens.length; i++) {
-            address token = tokens[i];
-            if (token == address(0)) continue;
-            
-            // Get user's debt for this token
-            (uint256 stableDebt, uint256 variableDebt) = getUserDebtInternal(user, token);
-            uint256 totalTokenDebt = stableDebt + variableDebt;
-            
-            // If simulating a borrow, add the additional amount
-            if (isBorrow && token == borrowTokenAddress && additionalBorrowAmount > 0) {
-                totalTokenDebt += additionalBorrowAmount;
-            }
-            
-            if (totalTokenDebt == 0) continue;
-            
-            // For simplicity, we'll use a proportion of the total debt
-            // In a real implementation, we'd use price oracles to convert to base currency
-            uint256 tokenDebtProportion = (totalTokenDebt * 1e18) / totalDepositedByToken[token];
-            uint256 tokenDebtBase = (totalDebtBase * tokenDebtProportion) / 1e18;
-            
-            // Add to user's debt base value
-            userDebtBase += tokenDebtBase;
-        }
-        
+
+        // Delegate collateral and debt calculations to helpers to reduce stack usage
+        uint256 userCollateralBase = _computeUserCollateralBase(
+            user,
+            tokens,
+            totalCollateralBase
+        );
+
+        uint256 userDebtBase = _computeUserDebtBase(
+            user,
+            tokens,
+            totalDebtBase,
+            additionalBorrowAmount,
+            borrowTokenAddress,
+            isBorrow
+        );
+
         // Calculate health factor
         if (userDebtBase == 0) {
             // No debt means maximum health factor
             return type(uint256).max;
         }
-        
+
         // Health factor = (collateral * liquidation threshold) / debt
         healthFactor = (userCollateralBase * currentLiquidationThreshold) / (userDebtBase * 10000);
-        
+
         return healthFactor;
+    }
+
+    /**
+     * @dev Internal helper to compute a user's collateral value in base currency.
+     */
+    function _computeUserCollateralBase(
+        address user,
+        address[] memory tokens,
+        uint256 totalCollateralBase
+    ) internal view returns (uint256 userCollateralBase) {
+        uint256 collateralAccum = 0;
+
+        for (uint256 i = 0; i < tokens.length; i++) {
+            address token = tokens[i];
+            if (token == address(0)) {
+                continue;
+            }
+
+            // Check if this token is used as collateral by this user
+            bool isCollateral = tokenStorage.getUserCollateralSetting(user, token);
+            if (!isCollateral) {
+                continue;
+            }
+
+            // Get the user's contribution for this token
+            uint256 userContribution = userDepositContributions[user][token];
+            if (userContribution == 0) {
+                continue;
+            }
+
+            // Get the total deposits for this token
+            uint256 totalDeposit = totalDepositedByToken[token];
+            if (totalDeposit == 0) {
+                continue;
+            }
+
+            // Calculate the user's proportion of the total collateral for this token
+            uint256 userProportion = (userContribution * 1e18) / totalDeposit;
+
+            // For simplicity, use a proportion of the contract's total collateral
+            uint256 tokenCollateralBase = (totalCollateralBase * userProportion) / 1e18;
+
+            // Add to user's collateral base value
+            collateralAccum += tokenCollateralBase;
+        }
+
+        return collateralAccum;
+    }
+
+    /**
+     * @dev Internal helper to compute a user's debt value in base currency.
+     */
+    function _computeUserDebtBase(
+        address user,
+        address[] memory tokens,
+        uint256 totalDebtBase,
+        uint256 additionalBorrowAmount,
+        address borrowTokenAddress,
+        bool isBorrow
+    ) internal view returns (uint256 userDebtBase) {
+        uint256 debtAccum = 0;
+
+        for (uint256 i = 0; i < tokens.length; i++) {
+            address token = tokens[i];
+            if (token == address(0)) {
+                continue;
+            }
+
+            // Get user's debt for this token
+            (uint256 stableDebt, uint256 variableDebt) = getUserDebtInternal(user, token);
+            uint256 totalTokenDebt = stableDebt + variableDebt;
+
+            // If simulating a borrow, add the additional amount
+            if (isBorrow && token == borrowTokenAddress && additionalBorrowAmount > 0) {
+                totalTokenDebt += additionalBorrowAmount;
+            }
+
+            if (totalTokenDebt == 0) {
+                continue;
+            }
+
+            // For simplicity, use a proportion of the total debt
+            // In a real implementation, we'd use price oracles to convert to base currency
+            uint256 tokenDebtProportion = (totalTokenDebt * 1e18) / totalDepositedByToken[token];
+            uint256 tokenDebtBase = (totalDebtBase * tokenDebtProportion) / 1e18;
+
+            // Add to user's debt base value
+            debtAccum += tokenDebtBase;
+        }
+
+        return debtAccum;
     }
     
     /**
@@ -456,7 +505,7 @@ contract MiniSafeAaveIntegration102 is
         uint256 healthFactor
     ) {
         require(user != address(0), "Invalid user address");
-          // Get the contract's overall position
+        // Get the contract's overall position
         (
             uint256 contractTotalCollateralBase,
             /* uint256 contractTotalDebtBase */,  // Commented to suppress warning
@@ -465,53 +514,20 @@ contract MiniSafeAaveIntegration102 is
             uint256 contractLtv,
             
         ) = aavePool.getUserAccountData(address(this));
-        
-        // Calculate proportional values based on user's deposits and borrows
-        // This is a simplified implementation
-        // In a real implementation, calculate exact values based on user's positions
-        
+
         // For health factor, use our calculated value
         healthFactor = this.getUserHealthFactor(user);
-        
+
         // Get all supported tokens
         address[] memory tokens = getAllSupportedTokens();
-        
-        // Calculate user's total collateral and debt
-        uint256 userCollateralBase = 0;
-        uint256 userDebtBase = 0;
-        
-        // For each token, calculate user's proportion
-        for (uint256 i = 0; i < tokens.length; i++) {
-            address token = tokens[i];
-            if (token == address(0)) continue;
-            
-            // Check if this token is used as collateral
-            bool isCollateral = tokenStorage.getUserCollateralSetting(user, token);
-            
-            // Get user's contribution for this token
-            uint256 userContribution = userDepositContributions[user][token];
-            
-            // Get the total deposits for this token
-            uint256 totalDeposit = totalDepositedByToken[token];
-            
-            if (isCollateral && userContribution > 0 && totalDeposit > 0) {
-                // Calculate user's proportion of total collateral
-                uint256 userProportion = (userContribution * 1e18) / totalDeposit;
-                uint256 tokenCollateralBase = (contractTotalCollateralBase * userProportion) / 1e18;
-                userCollateralBase += tokenCollateralBase;
-            }
-            
-            // Calculate user's debt for this token
-            (uint256 stableDebt, uint256 variableDebt) = getUserDebtInternal(user, token);
-            uint256 totalTokenDebt = stableDebt + variableDebt;
-            
-            if (totalTokenDebt > 0) {
-                // Calculate proportion of total debt
-                // In a real implementation, use price oracles
-                userDebtBase += totalTokenDebt; // Simplified
-            }
-        }
-        
+
+        // Delegate per-token collateral/debt math to a helper to reduce local variables
+        (uint256 userCollateralBase, uint256 userDebtBase) = _computeUserCollateralAndDebt(
+            user,
+            tokens,
+            contractTotalCollateralBase
+        );
+
         // Calculate available borrows
         if (userCollateralBase > 0) {
             availableBorrowsBase = (userCollateralBase * contractLtv / 10000) - userDebtBase;
@@ -519,7 +535,7 @@ contract MiniSafeAaveIntegration102 is
                 availableBorrowsBase = contractAvailableBorrowsBase;
             }
         }
-        
+
         return (
             userCollateralBase,
             userDebtBase,
@@ -528,6 +544,54 @@ contract MiniSafeAaveIntegration102 is
             contractLtv,
             healthFactor
         );
+    }
+
+    /**
+     * @dev Internal helper to compute a user's collateral and debt across all supported tokens.
+     *      Split out to avoid stack-too-deep issues in getUserAccountData during coverage builds.
+     */
+    function _computeUserCollateralAndDebt(
+        address user,
+        address[] memory tokens,
+        uint256 contractTotalCollateralBase
+    ) internal view returns (uint256 userCollateralBase, uint256 userDebtBase) {
+        uint256 collateralAccum = 0;
+        uint256 debtAccum = 0;
+
+        for (uint256 i = 0; i < tokens.length; i++) {
+            address token = tokens[i];
+            if (token == address(0)) {
+                continue;
+            }
+
+            // Check if this token is used as collateral
+            bool isCollateral = tokenStorage.getUserCollateralSetting(user, token);
+
+            // Get user's contribution for this token
+            uint256 userContribution = userDepositContributions[user][token];
+
+            // Get the total deposits for this token
+            uint256 totalDeposit = totalDepositedByToken[token];
+
+            if (isCollateral && userContribution > 0 && totalDeposit > 0) {
+                // Calculate user's proportion of total collateral
+                uint256 userProportion = (userContribution * 1e18) / totalDeposit;
+                uint256 tokenCollateralBase = (contractTotalCollateralBase * userProportion) / 1e18;
+                collateralAccum += tokenCollateralBase;
+            }
+
+            // Calculate user's debt for this token
+            (uint256 stableDebt, uint256 variableDebt) = getUserDebtInternal(user, token);
+            uint256 totalTokenDebt = stableDebt + variableDebt;
+
+            if (totalTokenDebt > 0) {
+                // Calculate proportion of total debt
+                // In a real implementation, use price oracles
+                debtAccum += totalTokenDebt; // Simplified
+            }
+        }
+
+        return (collateralAccum, debtAccum);
     }
 
     /**

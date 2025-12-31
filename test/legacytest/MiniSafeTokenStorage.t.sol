@@ -2,8 +2,9 @@
 pragma solidity ^0.8.29;
 
 import "forge-std/Test.sol";
-import "../src/minisafe/MiniSafeTokenStorage.sol";
+import "../../src/legacyMinisafe/MiniSafeTokenStorage.sol";
 contract MiniSafeTokenStorageTest is Test {
+
     MiniSafeTokenStorage102 public tokenStorage;
     address public owner;
     address public user1;
