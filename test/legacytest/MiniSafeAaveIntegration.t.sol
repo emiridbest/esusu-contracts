@@ -23,7 +23,7 @@ abstract contract MockAavePool is IPool {
         mockATokenForCUSD = _mockATokenForCUSD;
         mockATokenForToken = _mockATokenForToken;
     }
-      function getReserveData(address asset) external view override returns (DataTypes.ReserveData memory) {
+      function getReserveData(address asset) external view virtual override returns (DataTypes.ReserveData memory) {
         DataTypes.ReserveData memory data;
         if (asset == address(0x765DE816845861e75A25fCA122bb6898B8B1282a)) { // cUSD
             data.aTokenAddress = mockATokenForCUSD;
@@ -66,7 +66,7 @@ abstract contract MockAavePool is IPool {
     }
 
     // Implement required interface functions with empty implementations
-    function borrow(address, uint256, uint256, uint16, address) external pure override {}
+    function borrow(address, uint256, uint256, uint16, address) external virtual override {}
     function repay(address, uint256, uint256, address) external pure override returns (uint256) { return 0; }
     function repayWithATokens(address, uint256, uint256) external pure override returns (uint256) { return 0; }
     function repayWithPermit(address, uint256, uint256, address, uint256, uint8, bytes32, bytes32) external pure override returns (uint256) { return 0; }
@@ -147,12 +147,50 @@ abstract contract MockAavePool is IPool {
     function updateFlashloanPremiums(uint128, uint128) external override {}
 }
 
-// Concrete implementation of MockAavePool
 contract MockAavePoolImpl is MockAavePool {
+    address public mockCUSD;
+
     constructor(address _mockATokenForCUSD, address _mockATokenForToken) 
         MockAavePool(_mockATokenForCUSD, _mockATokenForToken) {
     }
-    
+
+    function setMockCUSD(address _mockCUSD) external {
+        mockCUSD = _mockCUSD;
+    }
+
+    function getReserveData(address asset) external view override returns (DataTypes.ReserveData memory) {
+        DataTypes.ReserveData memory data;
+        if (asset == address(0x765DE816845861e75A25fCA122bb6898B8B1282a) || (mockCUSD != address(0) && asset == mockCUSD)) { // cUSD
+            data.aTokenAddress = mockATokenForCUSD;
+        } else {
+            data.aTokenAddress = mockATokenForToken;
+        }
+        return data;
+    }
+
+    function supply(address asset, uint256 amount, address onBehalfOf, uint16 referralCode) external override {
+        // Mock the supply function: track supplied balance and mint aTokens to onBehalfOf
+        mockBalances[asset] += amount;
+
+        // Transfer tokens from msg.sender to this contract (mimic real pool behavior)
+        IERC20(asset).transferFrom(msg.sender, address(this), amount);
+
+        // Determine which mock aToken to mint based on the asset
+        address aTokenAddress;
+        if (asset == address(0x765DE816845861e75A25fCA122bb6898B8B1282a) || (mockCUSD != address(0) && asset == mockCUSD)) { // cUSD
+            aTokenAddress = mockATokenForCUSD;
+        } else {
+            aTokenAddress = mockATokenForToken;
+        }
+
+        MockAToken(aTokenAddress).mint(onBehalfOf, amount);
+    }
+
+    function borrow(address asset, uint256 amount, uint256, uint16, address onBehalfOf) external override {
+        // Mock borrow: transfer underlying to onBehalfOf (or address(this) which is the caller in integration)
+        // Since this is a mock, we can just mint if it's our MockERC20
+        MockERC20(asset).mint(onBehalfOf, amount);
+    }
 }
 
 abstract contract MockAaveAddressesProvider is IPoolAddressesProvider {
@@ -488,10 +526,15 @@ contract MiniSafeAaveIntegrationTest is Test {
 contract MockPoolDataProvider {
     address public mockATokenCUSD;
     address public mockATokenRandom;
+    address public mockCUSD;
     
     constructor(address _mockATokenCUSD, address _mockATokenRandom) {
         mockATokenCUSD = _mockATokenCUSD;
         mockATokenRandom = _mockATokenRandom;
+    }
+    
+    function setMockCUSD(address _mockCUSD) external {
+        mockCUSD = _mockCUSD;
     }
     
     function getReserveTokensAddresses(address asset) external view returns (
@@ -499,7 +542,7 @@ contract MockPoolDataProvider {
         address stableDebtTokenAddress,
         address variableDebtTokenAddress
     ) {
-        if (asset == address(0x765DE816845861e75A25fCA122bb6898B8B1282a)) { // cUSD
+        if (asset == address(0x765DE816845861e75A25fCA122bb6898B8B1282a) || (mockCUSD != address(0) && asset == mockCUSD)) { // cUSD
             return (mockATokenCUSD, address(0), address(0));
         } else {
             return (mockATokenRandom, address(0), address(0));

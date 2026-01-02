@@ -5,6 +5,7 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/Strings.sol";
 import "./IMiniSafeCommon.sol";
 import "./MiniSafeTokenStorage.sol";
 
@@ -25,6 +26,7 @@ contract MiniSafeAaveIntegration102 is
     ReentrancyGuard
 {
     using SafeERC20 for IERC20;
+    using Strings for uint256;
 
     /// @dev Aave Pool contract for lending and borrowing
     IPool public aavePool;
@@ -122,7 +124,7 @@ contract MiniSafeAaveIntegration102 is
         // Verify user has sufficient collateral to support this borrow
         // We'll check this by calculating the specific user's health factor
         uint256 userHealthFactor = calculateUserHealthFactor(user, amount, tokenAddress, interestRateMode, true);
-        require(userHealthFactor >= MIN_HEALTH_FACTOR, "Borrowing would make user position unsafe");
+        require(userHealthFactor >= MIN_HEALTH_FACTOR, string(abi.encodePacked("Borrowing would make user position unsafe. HF: ", userHealthFactor.toString())));
         
         // Store balance before borrowing
         uint256 preBalance = IERC20(tokenAddress).balanceOf(address(this));

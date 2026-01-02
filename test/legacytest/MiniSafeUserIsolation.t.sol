@@ -57,6 +57,10 @@ contract MiniSafeUserIsolationTest is Test {
         aaveIntegration = miniSafe.aaveIntegration();
         tokenStorage = miniSafe.tokenStorage();
         
+        // Configure mocks to recognize mockCUSD as CUSD
+        mockPool.setMockCUSD(address(mockCUSD));
+        mockDataProvider.setMockCUSD(address(mockCUSD));
+
         // Setup usage of mockCUSD
         miniSafe.addSupportedToken(address(mockCUSD));
         
@@ -120,6 +124,7 @@ contract MiniSafeUserIsolationTest is Test {
         miniSafe.deposit(address(mockRandomToken), 100 ether);
         vm.stopPrank();
 
+        vm.startPrank(user1);
         miniSafe.borrowFromAave(address(mockRandomToken), USER1_BORROW, 2); // Variable rate borrow
         
         // Check user 1's health factor

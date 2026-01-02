@@ -16,13 +16,6 @@ import "./MiniSafeAaveIntegration.t.sol";
 contract MockAavePoolConcrete is MockAavePool {
     constructor(address _mockATokenForCUSD, address _mockATokenForToken) 
         MockAavePool(_mockATokenForCUSD, _mockATokenForToken) {}
-        
-    // Implement supply function from IPool interface
-    function supply(address asset, uint256 amount, address onBehalfOf, uint16 referralCode) external override {
-        // Mock the supply function
-        // In a real implementation, this would transfer tokens and mint aTokens
-        mockBalances[asset] += amount;
-    }
 }
 
 contract MiniSafeAaveTest is Test {
@@ -50,7 +43,7 @@ contract MiniSafeAaveTest is Test {
     address public user2;
     
     // Constants for testing
-    uint256 public constant DEPOSIT_AMOUNT = 1000;
+    uint256 public constant DEPOSIT_AMOUNT = 1 ether;
     uint256 public constant INCENTIVE_PERCENTAGE = 5; // 5% incentive
     uint256 public constant TIMELOCK_DURATION = 7 days;
     uint256 public constant EMERGENCY_DELAY = 2 days; // Emergency withdrawal delay
@@ -92,11 +85,9 @@ contract MiniSafeAaveTest is Test {
         tokenStorage = miniSafe.tokenStorage();
         aaveIntegration = miniSafe.aaveIntegration();
         
-        // Ensure miniSafe is an authorized manager in its token storage
-        tokenStorage.setManagerAuthorization(address(miniSafe), true);
-        
         // Add a token for testing
         miniSafe.addSupportedToken(address(mockRandomToken));
+        miniSafe.addSupportedToken(address(mockCUSD));
         
         // Mint tokens to users for testing
         mockCUSD.mint(user1, DEPOSIT_AMOUNT * 10);
@@ -168,13 +159,14 @@ contract MiniSafeAaveTest is Test {
         assertEq(mockCUSD.balanceOf(user1), DEPOSIT_AMOUNT * 10);
     }
     
-    function testFailWithdrawBeforeTimelock() public {
+    function test_RevertWhen_WithdrawBeforeTimelock() public {
         // First make a deposit
         vm.startPrank(user1);
         mockCUSD.approve(address(miniSafe), DEPOSIT_AMOUNT);
         miniSafe.deposit(address(mockCUSD), DEPOSIT_AMOUNT);
         
         // Try to withdraw before timelock expires
+        vm.expectRevert();
         miniSafe.withdraw(address(mockCUSD), DEPOSIT_AMOUNT);
         vm.stopPrank();
     }
@@ -185,22 +177,24 @@ contract MiniSafeAaveTest is Test {
         mockCUSD.approve(address(miniSafe), DEPOSIT_AMOUNT);
         miniSafe.deposit(address(mockCUSD), DEPOSIT_AMOUNT);
         
-        uint16 incentive = 15;  
+        uint256 balanceAfterDeposit = mockCUSD.balanceOf(user1);
+        
+        // Calculate fee (2%)
+        uint256 fee = (DEPOSIT_AMOUNT * 200) / 10000;
+        uint256 amountAfterFee = DEPOSIT_AMOUNT - fee;
   
         vm.expectEmit(true, false, true, false);
-        emit TimelockBroken(user1, DEPOSIT_AMOUNT, address(mockCUSD));
+        emit TimelockBroken(user1, amountAfterFee, address(mockCUSD));
         
         // Break timelock
         miniSafe.breakTimelock(address(mockCUSD));
         vm.stopPrank();
         
-        // Check user got less than the full amount
-        assertTrue(incentive == 0);
-        
         // Check user's share in token storage was reduced
         assertEq(tokenStorage.getUserTokenShare(user1, address(mockCUSD)), 0);
         
-        assertEq(mockCUSD.balanceOf(user1), DEPOSIT_AMOUNT );
+        // Check tokens were transferred back (initial - fee)
+        assertEq(mockCUSD.balanceOf(user1), balanceAfterDeposit + amountAfterFee);
     }
     
   
@@ -220,23 +214,26 @@ contract MiniSafeAaveTest is Test {
         vm.prank(user1);
         mockCUSD.approve(address(miniSafe), DEPOSIT_AMOUNT);
         
-        vm.expectRevert("Pausable: paused");
+        vm.expectRevert("EnforcedPause()");
         vm.prank(user1);
         miniSafe.deposit(address(mockCUSD), DEPOSIT_AMOUNT);
     }
     
   
-    function testFailTriggerCircuitBreakerNotOwner() public {
+    function test_RevertWhen_TriggerCircuitBreakerNotOwner() public {
         vm.prank(user1);
+        vm.expectRevert();
         miniSafe.triggerCircuitBreaker("Not allowed");
     }
     
-    function testFailResumeAfterCircuitBreakerNotOwner() public {
+    function test_RevertWhen_ResumeAfterCircuitBreakerNotOwner() public {
         // First trigger circuit breaker
         vm.prank(owner);
         miniSafe.triggerCircuitBreaker("Security test");
         
         // Try to resume as non-owner
         vm.prank(user1);
+        vm.expectRevert("Caller is not the owner");
+        miniSafe.resumeOperations();
     }
 }
