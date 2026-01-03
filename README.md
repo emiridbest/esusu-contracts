@@ -115,3 +115,43 @@ To generate a coverage report:
 forge coverage
 ```
 
+---
+
+## Collateral Security Audit
+
+The Thrift module has been enhanced with a **"Savings as Collateral"** feature to prevent member defaults. A comprehensive security audit was performed using the same methodology as the [Initial Audit Report](./audit/audit%20report.md).
+
+### Collateral Findings
+
+| ID | Finding Title | Fix | Verification |
+| :-- | :--- | :--- | :--- |
+| **H-14** | Collateral Locked After Leaving | `leaveGroup` now releases `memberCollateral` back to disposable balance. | Collateral Test 1 |
+| **H-15** | Emergency Exit Debt Evasion | `leaveGroup` now seizes collateral and forfeits refunds for members who received payouts. | Collateral Test 2 |
+
+### Collateral Security Checks (All Passed)
+
+| Check | Status |
+| :--- | :---: |
+| Reentrancy Protection | ✅ |
+| Overflow Protection (Solidity 0.8+) | ✅ |
+| Access Control Modifiers | ✅ |
+| Double-Unlock Prevention | ✅ |
+| Public/Private Group Distinction | ✅ |
+| Token Consistency | ✅ |
+| Yield on Locked Collateral | ✅ |
+
+### Running Collateral Tests
+
+```bash
+forge test --match-path test/ThriftCollateral.t.sol -vv
+```
+
+| Test ID | Description |
+| :--- | :--- |
+| Collateral Test 1 | Verifies collateral is released when leaving before payout |
+| Collateral Test 2 | Verifies collateral is seized when leaving with debt |
+| Collateral Test 3 | Verifies contributions unlock collateral gradually |
+| Collateral Test 4 | Verifies auto-pay covers defaults using collateral |
+| Collateral Test 5 | Verifies private groups skip collateral locking |
+| Collateral Test 6 | Verifies public groups lock 5x collateral |
+

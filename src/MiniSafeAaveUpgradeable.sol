@@ -11,6 +11,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IMiniSafeCommon} from "./IMiniSafeCommon.sol";
 import {MiniSafeTokenStorageUpgradeable} from "./MiniSafeTokenStorageUpgradeable.sol";
 import {MiniSafeAaveIntegrationUpgradeable} from "./MiniSafeAaveIntegrationUpgradeable.sol";
+import "forge-std/console.sol";
 
 /**
  * @title MiniSafeAaveUpgradeable
@@ -77,6 +78,8 @@ contract MiniSafeAaveUpgradeable is
         uint256 maxMembers;
         uint256 currentCycle; // Which payout cycle we're in (1-5 for 5 members)
         uint256 currentRound; // Which complete round we're in
+        uint256 requiredCollateralShares; // Shares required to be locked as collateral (1x Contribution)
+        mapping(address => uint256) memberCollateral; // Tracks how much collateral each member has locked
         address admin;
         address tokenAddress; // Token used for contributions and payouts
         address[] members;
@@ -142,6 +145,13 @@ contract MiniSafeAaveUpgradeable is
     mapping(address => mapping(address => mapping(address => uint256))) public userRewardDebt; // user -> asset -> rewardToken -> debt
     mapping(address => mapping(address => uint256)) public userPendingRewards; // user -> rewardToken -> amount
     uint256 public constant REWARD_PRECISION = 1e12;
+
+    // THRIFT SECURITY & COLLATERAL
+    /// @dev Mapping of allowed tokens for creating new thrift groups (Stablecoins only)
+    mapping(address => bool) public allowedThriftTokens;
+
+    /// @dev Mapping of user locked shares per token (User -> Token -> Shares)
+    mapping(address => mapping(address => uint256)) public userLockedShares;
 
     event RewardTokenAdded(address indexed asset, address indexed rewardToken);
     event RewardsControllerUpdated(address indexed oldController, address indexed newController);
@@ -279,6 +289,55 @@ contract MiniSafeAaveUpgradeable is
     }
 
     /**
+     * @dev Set whether a token is allowed for Thrift groups (Restrict to Stablecoins)
+     * @param token Address of the token
+     * @param allowed Whether it is allowed
+     */
+    function setAllowedThriftToken(address token, bool allowed) external onlyOwner {
+        allowedThriftTokens[token] = allowed;
+    }
+
+    /**
+     * @dev Convert asset amount to shares based on current exchange rate
+     * @param tokenAddress Address of the token
+     * @param assets Amount of assets to convert
+     * @return uint256 Equivalent shares
+     */
+    function convertToShares(address tokenAddress, uint256 assets) public view returns (uint256) {
+        uint256 totalAssets = aaveIntegration.getATokenBalance(tokenAddress);
+        uint256 totalShares = tokenStorage.getTotalShares(tokenAddress);
+        
+        // Standard ERC4626-like logic: if pool is empty, 1:1
+        if (totalShares == 0 || totalAssets == 0) return assets;
+        return (assets * totalShares) / totalAssets;
+    }
+
+    /**
+     * @dev Convert share amount to assets based on current exchange rate
+     * @param tokenAddress Address of the token
+     * @param shares Amount of shares to convert
+     * @return uint256 Equivalent assets
+     */
+    function convertToAssets(address tokenAddress, uint256 shares) public view returns (uint256) {
+        uint256 totalAssets = aaveIntegration.getATokenBalance(tokenAddress);
+        uint256 totalShares = tokenStorage.getTotalShares(tokenAddress);
+        
+        if (totalShares == 0) return shares;
+        return (shares * totalAssets) / totalShares;
+    }
+
+    /**
+     * @dev Get the amount of shares a user can withdraw (Total - Locked)
+     * @param user Address of the user
+     * @param tokenAddress Address of the token
+     * @return uint256 Disposable share balance
+     */
+    function getDisposableBalance(address user, address tokenAddress) public view returns (uint256) {
+        uint256 totalShares = tokenStorage.getUserTokenShare(user, tokenAddress);
+        uint256 locked = userLockedShares[user][tokenAddress];
+        return totalShares > locked ? totalShares - locked : 0;
+    }
+    /**
      * @dev Claim accumulated rewards for the caller
      * @param assets List of assets to claim rewards from
      */
@@ -405,6 +464,9 @@ contract MiniSafeAaveUpgradeable is
         // Check user has enough shares
         uint256 userShares = tokenStorage.getUserTokenShare(msg.sender, tokenAddress);
         require(userShares >= sharesToBurn, "Insufficient balance");
+
+        // Lock Check: Ensure user has enough disposable shares
+        require(userShares - userLockedShares[msg.sender][tokenAddress] >= sharesToBurn, "Funds locked as collateral");
         
         // EFFECTS: Check circuit breaker conditions and update state BEFORE external calls
         _checkCircuitBreaker(amount);
@@ -549,6 +611,21 @@ contract MiniSafeAaveUpgradeable is
         // Check if user has funds to withdraw
         uint256 userShares = tokenStorage.getUserTokenShare(msg.sender, tokenAddress);
         require(userShares > 0, "No savings to withdraw");
+        
+        // Lock Check: Ensure user has enough disposable shares (cannot break timelock on collateral)
+        // Since breakTimelock tries to withdraw ALL shares, we must check if ANY are locked.
+        // Actually, breakTimelock withdraws "everything they have".
+        // If they have collateral locked, they should only be able to withdraw the disposable part?
+        // OR should strictly revert if they have ANY locked funds? 
+        // Logic: breakTimelock withdraws userShares. If userShares > locked, they can withdraw (userShares - locked).
+        // But the original function withdraws EVERYTHING. 
+        // Let's modify it to only withdraw DISPOSABLE balance.
+        uint256 locked = userLockedShares[msg.sender][tokenAddress];
+        require(userShares > locked, "All funds locked as collateral");
+        
+        // Adjust shares to withdraw to only be the disposable amount
+        userShares = userShares - locked;
+
         // Ensure this is outside the normal withdrawal window
         require(!canWithdraw(), "Cannot use this method during withdrawal window");
         
@@ -758,6 +835,8 @@ contract MiniSafeAaveUpgradeable is
         require(startDate >= block.timestamp, "Start date must be in the future");
         require(contributionAmount >= MIN_CONTRIBUTION, "Contribution amount too small");
         require(tokenStorage.isValidToken(tokenAddress), "Unsupported token");
+        // Thrift Security: Restrict new groups to Stablecoins
+        require(allowedThriftTokens[tokenAddress], "Token not allowed for new Thrift Groups");
 
         ThriftGroup storage newGroup = thriftGroups.push();
         newGroup.groupId = totalThriftGroups;
@@ -773,6 +852,23 @@ contract MiniSafeAaveUpgradeable is
         newGroup.members.push(msg.sender);
         newGroup.isActive = false; // Will be activated when group is full
         newGroup.isPublic = isPublic;
+
+        // Thrift Security: Lock Creator's Collateral (Full Cycle = Max Members * Contribution)
+        // ONLY for PUBLIC groups
+        if (isPublic) {
+            uint256 totalCollateralAmount = contributionAmount * MAX_MEMBERS;
+            uint256 collateralShares = convertToShares(tokenAddress, totalCollateralAmount);
+            
+            // Ensure user has enough disposable savings
+            require(getDisposableBalance(msg.sender, tokenAddress) >= collateralShares, "Insufficient savings for 5x collateral");
+            
+            // Lock the shares
+            userLockedShares[msg.sender][tokenAddress] += collateralShares;
+            
+            // Store group requirements
+            newGroup.requiredCollateralShares = collateralShares; // Total locked initially
+            newGroup.memberCollateral[msg.sender] = collateralShares;
+        }
 
         uint256 groupId = totalThriftGroups;
         totalThriftGroups++;
@@ -802,6 +898,17 @@ contract MiniSafeAaveUpgradeable is
         require(!isGroupMember(groupId, msg.sender), "Already a member");
         require(block.timestamp <= group.startDate, "Group has already started");
 
+        // Thrift Security: Lock Joiner's Collateral (Full Cycle)
+        uint256 totalCollateralAmount = group.contributionAmount * group.maxMembers;
+        uint256 collateralShares = convertToShares(group.tokenAddress, totalCollateralAmount);
+        
+        // Ensure user has enough disposable savings
+        require(getDisposableBalance(msg.sender, group.tokenAddress) >= collateralShares, "Insufficient savings for 5x collateral");
+        
+        // Lock the shares
+        userLockedShares[msg.sender][group.tokenAddress] += collateralShares;
+        group.memberCollateral[msg.sender] = collateralShares;
+
         group.members.push(msg.sender);
 
         // If group is now full, activate it and set up payout order
@@ -830,6 +937,11 @@ contract MiniSafeAaveUpgradeable is
         require(group.members.length < group.maxMembers, "Group is full");
         require(!isGroupMember(groupId, member), "Already a member");
         require(block.timestamp <= group.startDate, "Group has already started");
+
+        require(block.timestamp <= group.startDate, "Group has already started");
+
+        // Private groups: NO collateral required.
+        // Locking logic removed.
 
         group.members.push(member);
 
@@ -987,6 +1099,22 @@ contract MiniSafeAaveUpgradeable is
         group.totalContributed[msg.sender] += amount;
         group.hasPaidThisCycle[msg.sender] = true;
 
+        // Thrift Security: Unlock 1 Cycle's worth of Collateral
+        // ONLY if user HAS Locked Collateral (Public Groups)
+        // Since they paid 'fresh' funds, we release their 'pre-paid' collateral for this round.
+        uint256 cycleShares = convertToShares(tokenAddress, amount);
+        
+        // Check if user has enough LOCKED shares to unlock 
+        // (For private groups, locked will be 0, so this block won't execute - correct behavior)
+        // Also check memberCollateral specifically for this group to avoid unlocking other groups' collateral
+        if (group.memberCollateral[msg.sender] >= cycleShares) {
+             // Safe to assume userLockedShares is also >= cycleShares if state is consistent
+             if (userLockedShares[msg.sender][tokenAddress] >= cycleShares) {
+                userLockedShares[msg.sender][tokenAddress] -= cycleShares;
+             }
+             group.memberCollateral[msg.sender] -= cycleShares;
+        }
+
         emit ContributionMade(groupId, msg.sender, amount);
 
         // Check if all members have contributed and process payout if ready
@@ -1031,6 +1159,69 @@ contract MiniSafeAaveUpgradeable is
 
         _processPayout(groupId, group.tokenAddress);
     }
+
+    /**
+     * @dev Cover a default using the member's locked collateral (Auto-Pay)
+     * @param groupId ID of the group
+     * @param defaulter Address of the defaulting member
+     */
+    function coverDefault(uint256 groupId, address defaulter) 
+        external 
+        onlyActiveGroup(groupId) // Anyone can trigger for active group
+        nonReentrant 
+    {
+        ThriftGroup storage group = thriftGroups[groupId];
+        
+        // 1. Check if eligible for cover
+        require(block.timestamp >= group.nextPayoutDate, "Wait for payout date");
+        require(!group.hasPaidThisCycle[defaulter], "Member already paid");
+        
+        // 2. Calculate amount needed
+        uint256 amount = group.contributionAmount;
+        uint256 sharesNeeded = convertToShares(group.tokenAddress, amount);
+        
+        // 3. Check collateral availability
+        require(userLockedShares[defaulter][group.tokenAddress] >= sharesNeeded, "Insufficient collateral to cover");
+        
+        // 4. Use Collateral: Unlock -> Burn form User -> Mint to Thrift Pool -> Update State
+        
+        // Unlock
+        userLockedShares[defaulter][group.tokenAddress] -= sharesNeeded;
+        if (group.memberCollateral[defaulter] >= sharesNeeded) {
+            group.memberCollateral[defaulter] -= sharesNeeded;
+        } else {
+             group.memberCollateral[defaulter] = 0;
+        }
+
+        // Transfer Shares: User -> Thrift Pool (address(this))
+        // updateUserBalance handles Share logic, but we need to move "Shares" from User to Contract.
+        // Option A: Burn from User, Mint to Contract.
+        updateUserBalance(defaulter, group.tokenAddress, sharesNeeded, false); // Decrease User
+        updateUserBalance(address(this), group.tokenAddress, sharesNeeded, true); // Increase Contract
+        
+        // 5. Update Thrift Accounting (Assets)
+        // Since we moved shares to the contract, the contract now "owns" the underlying assets in Aave.
+        // We must increment totalThriftStaked so the payout logic knows it has these funds.
+        // Note: We use the *calculated* asset amount from shares, which should be roughly `amount`.
+        // To be precise with the `contributionAmount` expected by the group logic:
+        totalThriftStaked[group.tokenAddress] += amount;
+        
+        // 6. Record Contribution
+        // Record timestamp for yield calculation (late payment = less yield for them, but group proceeds)
+        cycleContributionTime[groupId][defaulter] = block.timestamp;
+        
+        group.contributions[defaulter] += amount;
+        group.totalContributed[defaulter] += amount;
+        group.hasPaidThisCycle[defaulter] = true;
+        
+        emit ContributionMade(groupId, defaulter, amount);
+        emit DefaultCovered(groupId, defaulter, amount);
+        
+        // 7. Check Payout
+        _checkAndProcessPayout(groupId, group.tokenAddress);
+    }
+
+    event DefaultCovered(uint256 indexed groupId, address indexed member, uint256 amount);
 
     // =============== EMERGENCY WITHDRAWAL ===============
     /// @notice Emitted when a group admin performs an emergency withdrawal of their contributions
@@ -1345,12 +1536,49 @@ contract MiniSafeAaveUpgradeable is
             "Cannot leave after receiving payout"
         );
 
-        // Store refund amount and member info before making any state changes
-        uint256 refundAmount = group.totalContributed[msg.sender];
+        // Determine Refund & Collateral Logic based on Payout Status
         address tokenAddress = group.tokenAddress;
         bool shouldDeactivateGroup = group.members.length <= 2; // Will be < 2 after removal
+        bool receivedPayout = _hasReceivedPayout(groupId, msg.sender);
+        uint256 refundAmount = 0;
+        
+        if (!receivedPayout) {
+             // Normal Case: Has NOT received payout.
+             // Refund contributions.
+             refundAmount = group.totalContributed[msg.sender];
+             
+             // Release Collateral (Audit Fix H-14)
+             uint256 collateral = group.memberCollateral[msg.sender];
+             if (collateral > 0) {
+                 if (userLockedShares[msg.sender][tokenAddress] >= collateral) {
+                     userLockedShares[msg.sender][tokenAddress] -= collateral;
+                 } else {
+                     userLockedShares[msg.sender][tokenAddress] = 0;
+                 }
+                 group.memberCollateral[msg.sender] = 0; 
+                 // It stays in user's share balance (just unlocked)
+             }
+        } else {
+             // Debt Case: HAS received payout. (Emergency Exit only, since !isActive check passes)
+             // Audit Fix H-15: Seize Collateral & Forfeit Contributions to cover debt.
+             refundAmount = 0; // No refund.
+             
+             // Seize Collateral -> Transfer shares to Thrift Pool
+             uint256 collateral = group.memberCollateral[msg.sender];
+             if (collateral > 0) {
+                 if (userLockedShares[msg.sender][tokenAddress] >= collateral) {
+                     userLockedShares[msg.sender][tokenAddress] -= collateral;
+                 } else {
+                    userLockedShares[msg.sender][tokenAddress] = 0;
+                 }
+                 group.memberCollateral[msg.sender] = 0;
+                 
+                 // TRANSFER SHARES: User -> Pool
+                 updateUserBalance(msg.sender, tokenAddress, collateral, false); // Burn from User
+                 updateUserBalance(address(this), tokenAddress, collateral, true); // Mint to Pool
+             }
+        }
 
-        // EFFECTS: Make all state changes before external calls
         // Remove member from group first (this resets all member state)
         _removeMemberFromGroup(groupId, msg.sender);
         
