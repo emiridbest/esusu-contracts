@@ -1,0 +1,55 @@
+# Compiler files
+cache/
+out/
+
+# Ignores development broadcast logs
+!/broadcast
+/broadcast/*/31337/
+/broadcast/**/dry-run/
+
+# Docs
+docs/
+
+# Dotenv file
+.env
+
+.DS_Store
+
+broadcast/Playground.sol
+node_modules
+
+node_modules
+.env
+
+# Hardhat files
+/cache
+/artifacts
+/cache_hardhat
+
+# TypeChain files
+/typechain
+/typechain-types
+
+# solidity-coverage files
+/coverage
+/coverage.json
+
+node_modules
+.env
+
+# Hardhat files
+/cache
+/artifacts
+/artifacts-zk
+/cache_hardhat-zk
+
+# TypeChain files
+/typechain
+/typechain-types
+
+# solidity-coverage files
+/coverage
+/coverage.json
+
+*.tgz
+pnpm-lock.yaml

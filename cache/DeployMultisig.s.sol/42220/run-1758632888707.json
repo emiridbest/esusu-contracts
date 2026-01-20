@@ -1,0 +1,19 @@
+{
+  "transactions": [
+    {
+      "rpc": "https://forno.celo.org"
+    },
+    {
+      "rpc": "https://forno.celo.org"
+    },
+    {
+      "rpc": "https://forno.celo.org"
+    },
+    {
+      "rpc": "https://forno.celo.org"
+    },
+    {
+      "rpc": "https://forno.celo.org"
+    }
+  ]
+}

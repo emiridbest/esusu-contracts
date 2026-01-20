@@ -1,0 +1,22 @@
+[profile.default]
+rpc_url = "https://celo-mainnet.infura.io/v3/0bbb45846bdf44d1bcbe6275327619ad"
+src = "src"
+out = "out"
+libs = ["lib"]
+optimizer = true
+optimizer_runs = 1
+via_ir = false
+
+
+[etherscan]
+celo-alfajores = { key = "${CELOSCAN_API_KEY}", url = "https://api-alfajores.celoscan.io/api"}
+celo = { key = "${CELOSCAN_API_KEY}", url = "https://api.celoscan.io/api"}
+
+[rpc_endpoints]
+celo-alfajores = "https://alfajores-forno.celo-testnet.org"
+celo = "https://forno.celo.org"
+# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
+
+
+
+# forge create src/MiniSafeFactory.sol:MiniSafeFactory --rpc-url https://forno.celo.org --private-key 
